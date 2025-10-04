@@ -140,3 +140,15 @@ vite.config.ts.timestamp-*
 
 # PDF files
 *.pdf
+
+# Audio, Vidio files
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.mkv
+*.wav
+*.wma
+*.m4a
