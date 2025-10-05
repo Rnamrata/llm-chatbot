@@ -152,3 +152,6 @@ vite.config.ts.timestamp-*
 *.wav
 *.wma
 *.m4a
+
+# YouTube downloads directory
+docs/youtube/
