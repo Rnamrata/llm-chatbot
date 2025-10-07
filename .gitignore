@@ -175,3 +175,5 @@ temp/
 .AppleDouble
 .LSOverride 
 
+#chroma database
+chroma_db/
