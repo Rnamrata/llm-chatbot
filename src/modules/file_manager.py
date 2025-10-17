@@ -8,13 +8,60 @@ from langchain.document_loaders import WebBaseLoader
 
 
 class FileManager:
+    def __init__(self, document_processor, vector_store):
+        """
+        Initialize FileManager with dependencies
+        
+        Args:
+            document_processor: DocumentProcessor instance
+            vector_store: VectorStoreAndEmbedding instance
+        """
+        self.document_processor = document_processor
+        self.vector_store = vector_store
 
     def uploadFile(self):
-        uploaded_file = request.files['file']
-        destination = 'uploads/' + uploaded_file.filename
-        uploaded_file.save(destination)
+        """
+        Upload file from device
+        Automatically: Extract → Chunk → Embed → Store
+        """
+        try:
+            uploaded_file = request.files['file']
+            filename = uploaded_file.filename
+            destination = 'uploads/' + uploaded_file.filename
+            uploaded_file.save(destination)
 
-        return {'data': 'File Uploaded Successfully'}
+            # Extract content based on file type
+            if filename.endswith('.pdf'):
+                content = self.document_processor.pdfToText(destination, filename)
+            elif filename.endswith(('.txt', '.md')):
+                content = self.document_processor.textFileToText(destination, filename)
+            else:
+                return {'error': 'Unsupported file type', 'success': False}
+            
+            if not content:
+                return {'error': 'No content extracted from file', 'success': False}
+            
+            # Chunk the content
+            chunks = self.document_processor.chunkDocument(
+                content=content,
+                metadata={'source': filename, 'type': 'file_upload'}
+            )
+            
+            if not chunks:
+                return {'error': 'Failed to create chunks', 'success': False}
+            
+            # Store in vector database
+            store_result = self.vector_store.store_chunks(chunks)
+            
+            return {
+                'success': True,
+                'message': 'File uploaded and processed successfully',
+                'filename': filename,
+                'chunks_created': store_result['count']
+            }
+        except Exception as e:
+            print(f"Error in uploadFile: {e}")
+            return {'error': str(e), 'success': False}
     
     def downloadYouTubeFile(self, save_dir, url):
         # Download audio
@@ -53,60 +100,116 @@ class FileManager:
         return doc
 
     def uploadMediaFile(self):
-        url = request.form.get('url')  # Fixed: added .get()
-        if not url:
-            return {'error': 'No URL provided'}, 400
-        
-        save_dir = 'uploads/media/'
-        os.makedirs(save_dir, exist_ok=True)
+        """
+        Upload YouTube video
+        Automatically: Download → Transcribe → Chunk → Embed → Store
+        """
+        try:
+            url = request.form.get('url') if request.form.get('url') else request.json.get('url')
+            if not url:
+                return {'error': 'No URL provided', 'success': False}
+            
+            save_dir = 'uploads/media/'
+            os.makedirs(save_dir, exist_ok=True)
 
-        audio_file_path = self.downloadYouTubeFile(save_dir, url)
-        
-        if audio_file_path:
+            # Download audio
+            audio_file_path = self.downloadYouTubeFile(save_dir, url)
+            
+            if not audio_file_path:
+                return {'error': 'Failed to download audio from YouTube', 'success': False}
+            
+            # Transcribe audio
             doc = self.transcribeAudioFile(audio_file_path, url)
+            
             # Save transcription to text file
-            base_filename = os.path.splitext(doc.metadata['file'])[0]  # Remove extension
+            base_filename = os.path.splitext(doc.metadata['file'])[0]
             transcription_filename = f"{base_filename}_transcription.txt"
             transcription_path = os.path.join('uploads', transcription_filename)
             
             with open(transcription_path, 'w', encoding='utf-8') as f:
                 f.write(doc.page_content)
+
+            # Chunk the transcription
+            chunks = self.document_processor.chunkDocument(
+                content=doc.page_content,
+                metadata={'source': url, 'type': 'youtube', 'filename': transcription_filename}
+            )
             
-            return {'data': 'Media File Uploaded and Transcribed Successfully'}
-        else:
-            return {'error': 'Failed to download audio from the provided URL'}, 400 
+            if not chunks:
+                return {'error': 'Failed to create chunks', 'success': False}
+            
+            # Store in vector database
+            store_result = self.vector_store.store_chunks(chunks)
+            
+            return {
+                'success': True,
+                'message': 'YouTube video processed and stored successfully',
+                'url': url,
+                'transcription_file': transcription_filename,
+                'chunks_created': store_result['count']
+            }
+            
+        except Exception as e:
+            print(f"Error in uploadMediaFile: {e}")
+            return {'error': str(e), 'success': False}
 
     def webFileUpload(self):
-        url = request.form.get('url')  # Fixed: added .get()
-        if not url:
-            return {'error': 'No URL provided'}, 400
-        loader = WebBaseLoader(url)
-        data = loader.load()
+        """
+        Upload web page content
+        Automatically: Scrape → Chunk → Embed → Store
+        """
+        try:
+            url = request.form.get('url') if request.form.get('url') else request.json.get('url')
+            if not url:
+                return {'error': 'No URL provided', 'success': False}
+            
+            # Load web content
+            loader = WebBaseLoader(url)
+            data = loader.load()
 
-        if not data:
-            return {'error': 'Failed to load data from the provided URL'}, 400
-        # Get the first document from the list
-        doc = data[0]
-        
-        # Create a safe filename from the title
-        title = doc.metadata.get('title', 'web_content')
-        safe_filename = title.replace(" ", "_").replace("/", "_").replace("\\", "_")
-        # Remove any other problematic characters
-        safe_filename = "".join(c for c in safe_filename if c.isalnum() or c in ('_', '-', '.'))
-        
-        # Save the page content to a text file
-        destination = f'uploads/{safe_filename}.txt'
-        
-        with open(destination, 'w', encoding='utf-8') as f:
-            # Write metadata first
-            f.write(f"Source: {doc.metadata.get('source', 'N/A')}\n")
-            f.write(f"Title: {doc.metadata.get('title', 'N/A')}\n")
-            f.write(f"Description: {doc.metadata.get('description', 'N/A')}\n")
-            f.write(f"Language: {doc.metadata.get('language', 'N/A')}\n")
-            f.write("\n" + "="*80 + "\n\n")
-            # Write the main content
-            f.write(doc.page_content)
-        
-        print(f"Web content saved to: {destination}")
-        
-        return {'data': 'Web File Uploaded Successfully'}
+            if not data:
+                return {'error': 'Failed to load data from URL', 'success': False}
+            
+            doc = data[0]
+            
+            # Create a safe filename from the title
+            title = doc.metadata.get('title', 'web_content')
+            safe_filename = title.replace(" ", "_").replace("/", "_").replace("\\", "_")
+            safe_filename = "".join(c for c in safe_filename if c.isalnum() or c in ('_', '-', '.'))
+            
+            # Save the page content to a text file
+            destination = f'uploads/{safe_filename}.txt'
+            
+            with open(destination, 'w', encoding='utf-8') as f:
+                f.write(f"Source: {doc.metadata.get('source', 'N/A')}\n")
+                f.write(f"Title: {doc.metadata.get('title', 'N/A')}\n")
+                f.write(f"Description: {doc.metadata.get('description', 'N/A')}\n")
+                f.write(f"Language: {doc.metadata.get('language', 'N/A')}\n")
+                f.write("\n" + "="*80 + "\n\n")
+                f.write(doc.page_content)
+
+            print(f"Web content saved to: {destination}")
+            
+            # Chunk the content
+            chunks = self.document_processor.chunkDocument(
+                content=doc.page_content,
+                metadata={'source': url, 'type': 'web', 'title': title, 'filename': safe_filename}
+            )
+            
+            if not chunks:
+                return {'error': 'Failed to create chunks', 'success': False}
+            
+            # Store in vector database
+            store_result = self.vector_store.store_chunks(chunks)
+            
+            return {
+                'success': True,
+                'message': 'Web page processed and stored successfully',
+                'url': url,
+                'filename': f'{safe_filename}.txt',
+                'chunks_created': store_result['count']
+            }
+            
+        except Exception as e:
+            print(f"Error in webFileUpload: {e}")
+            return {'error': str(e), 'success': False}

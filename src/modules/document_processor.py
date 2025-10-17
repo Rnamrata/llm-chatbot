@@ -36,47 +36,40 @@ class DocumentProcessor:
             print(f"Error reading PDF {file_name}: {e}")
             return ""
 
-    def chunkingDocument(self):
-        text_files = os.listdir('uploads/')
-        documents = []
+    def textFileToText(self, file_path, file_name):
+        """Extract text from text/markdown files"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            print(f"Text file: {file_name}")
+            return content
+        except Exception as e:
+            print(f"Error reading {file_name}: {e}")
+            return ""
+
+    def chunkDocument(self, content, metadata):
+        """
+        Chunk a single document
         
-        for file_name in text_files:
-            if file_name.endswith(('.txt', '.pdf', '.md')):
-                file_path = os.path.join('uploads/', file_name)
-                try:
-                    if file_name.endswith('.pdf'):
-                        content = self.pdfToText(file_path, file_name)
-                    else:
-                        # Handle text and markdown files
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        print(f"Text file: {file_name}")
-                    
-                    # Create Document objects
-                    doc = Document(
-                        page_content=content,
-                        metadata={"source": file_name}
-                    )
-                    documents.append(doc)
-                    
-                except Exception as e:
-                    print(f"Error reading {file_name}: {e}")
-                    continue
+        Args:
+            content: Text content to chunk
+            metadata: Metadata dictionary for the document
         
-        if not documents:
-            print("No documents found to chunk")
+        Returns:
+            List of Document chunks
+        """
+        if not content:
+            print("No content to chunk")
             return []
         
-        # Process each document through markdown splitter, then recursive splitter
-        md_splits = []
-        for doc in documents:
-            splits = self.markdown_splitter.split_text(doc.page_content)
-            md_splits.extend(splits)
+        # Create Document object
+        doc = Document(page_content=content, metadata=metadata)
         
-        final_splits = self.recursive_splitter.split_documents(md_splits)
+        # Apply markdown splitting
+        md_splits = self.markdown_splitter.split_text(doc.page_content)
         
-        print(f"Total documents loaded: {len(documents)}")
-        print(f"After markdown splitting: {len(md_splits)}")
-        print(f"Final chunks created: {len(final_splits)}")
+        # Apply recursive splitting
+        final_chunks = self.recursive_splitter.split_documents(md_splits)
         
-        return final_splits
+        print(f"Created {len(final_chunks)} chunks")
+        return final_chunks

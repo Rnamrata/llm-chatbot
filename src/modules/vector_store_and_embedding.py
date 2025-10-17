@@ -40,7 +40,7 @@ class VectorStoreAndEmbedding:
         
         # Add to vector store
         self.vectorstore.add_documents(documents)
-        
+        print(self.vectorstore._collection.count())
         print(f"Stored {len(documents)} chunks in vector database")
         return {
             'data': 'Chunks embedded and stored successfully',
@@ -49,5 +49,5 @@ class VectorStoreAndEmbedding:
     
     def search(self, query, k=5):
         """Search for similar chunks"""
-        results = self.vectorstore.similarity_search(query, k=k)
+        results = self.vectorstore.max_marginal_relevance_search(query, k=k)
         return results
