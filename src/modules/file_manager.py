@@ -5,24 +5,28 @@ import sys
 from langchain.schema import Document
 import whisper
 from langchain.document_loaders import WebBaseLoader
+from .code_parser import CodeParser
 
 
 class FileManager:
-    def __init__(self, document_processor, vector_store):
+    def __init__(self, document_processor, vector_store, code_parser=None):
         """
         Initialize FileManager with dependencies
-        
+
         Args:
             document_processor: DocumentProcessor instance
             vector_store: VectorStoreAndEmbedding instance
+            code_parser: CodeParser instance (optional, created if not provided)
         """
         self.document_processor = document_processor
         self.vector_store = vector_store
+        self.code_parser = code_parser if code_parser else CodeParser()
 
     def uploadFile(self):
         """
-        Upload file from device
+        Upload file from device (documents or code)
         Automatically: Extract → Chunk → Embed → Store
+        Detects file type and routes to appropriate processor
         """
         try:
             uploaded_file = request.files['file']
@@ -30,39 +34,122 @@ class FileManager:
             destination = 'uploads/' + uploaded_file.filename
             uploaded_file.save(destination)
 
-            # Extract content based on file type
-            if filename.endswith('.pdf'):
+            # Check if it's a code file
+            if self.code_parser.is_code_file(filename):
+                # Handle as code file
+                with open(destination, 'r', encoding='utf-8') as f:
+                    code_content = f.read()
+
+                # Use code-specific chunking
+                chunks = self.code_parser.chunk_code(code_content, filename)
+
+                if not chunks:
+                    return {'error': 'Failed to parse code file', 'success': False}
+
+                # Store in vector database
+                store_result = self.vector_store.store_chunks(chunks)
+
+                language = self.code_parser.detect_language(filename)
+
+                return {
+                    'success': True,
+                    'message': 'Code file uploaded and processed successfully',
+                    'filename': filename,
+                    'file_type': 'code',
+                    'language': language,
+                    'chunks_created': store_result['count']
+                }
+
+            # Handle as document file
+            elif filename.endswith('.pdf'):
                 content = self.document_processor.pdfToText(destination, filename)
             elif filename.endswith(('.txt', '.md')):
                 content = self.document_processor.textFileToText(destination, filename)
             else:
                 return {'error': 'Unsupported file type', 'success': False}
-            
+
             if not content:
                 return {'error': 'No content extracted from file', 'success': False}
-            
+
             # Chunk the content
             chunks = self.document_processor.chunkDocument(
                 content=content,
-                metadata={'source': filename, 'type': 'file_upload'}
+                metadata={'source': filename, 'type': 'file_upload', 'content_type': 'document'}
             )
-            
+
             if not chunks:
                 return {'error': 'Failed to create chunks', 'success': False}
-            
+
             # Store in vector database
             store_result = self.vector_store.store_chunks(chunks)
-            
+
             return {
                 'success': True,
                 'message': 'File uploaded and processed successfully',
                 'filename': filename,
+                'file_type': 'document',
                 'chunks_created': store_result['count']
             }
         except Exception as e:
             print(f"Error in uploadFile: {e}")
             return {'error': str(e), 'success': False}
-    
+
+    def uploadCodeForReview(self):
+        """
+        Upload code file specifically for code review
+        Provides additional metadata and complexity analysis
+        """
+        try:
+            uploaded_file = request.files['file']
+            filename = uploaded_file.filename
+            destination = 'uploads/' + uploaded_file.filename
+            uploaded_file.save(destination)
+
+            # Verify it's a code file
+            if not self.code_parser.is_code_file(filename):
+                return {'error': 'File is not a supported code file', 'success': False}
+
+            # Read code content
+            with open(destination, 'r', encoding='utf-8') as f:
+                code_content = f.read()
+
+            language = self.code_parser.detect_language(filename)
+
+            # Calculate complexity metrics
+            complexity = self.code_parser.calculate_complexity(code_content, language)
+
+            # Chunk the code
+            chunks = self.code_parser.chunk_code(code_content, filename)
+
+            if not chunks:
+                return {'error': 'Failed to parse code file', 'success': False}
+
+            # Store in vector database
+            store_result = self.vector_store.store_chunks(chunks)
+
+            return {
+                'success': True,
+                'message': 'Code file uploaded for review successfully',
+                'filename': filename,
+                'language': language,
+                'chunks_created': store_result['count'],
+                'complexity': complexity
+            }
+
+        except Exception as e:
+            print(f"Error in uploadCodeForReview: {e}")
+            return {'error': str(e), 'success': False}
+
+    def uploadCodeDirectory(self):
+        """
+        Upload multiple code files from a directory (future enhancement)
+        For now, returns a placeholder
+        """
+        return {
+            'success': False,
+            'error': 'Directory upload not yet implemented. Please upload files individually.'
+        }
+
     def downloadYouTubeFile(self, save_dir, url):
         # Download audio
         ydl_opts = {

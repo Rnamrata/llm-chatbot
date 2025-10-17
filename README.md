@@ -1,6 +1,10 @@
-# 🤖 RAG Chatbot System
+# 🤖 Dual-Mode RAG Chatbot System
 
-A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that allows you to chat with your documents using local LLMs. Upload files, YouTube videos, or web pages, and have intelligent conversations with the content.
+A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system with dual functionality:
+1. **Document Q&A Mode** - Chat with your documents using local LLMs
+2. **Code Review Mode** - AI-powered code analysis and review
+
+Upload documents, code files, YouTube videos, or web pages, and have intelligent conversations or get comprehensive code reviews.
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Flask](https://img.shields.io/badge/Flask-3.0+-green.svg)
@@ -27,17 +31,31 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 
 ## ✨ Features
 
-### Core Capabilities
+### Document Q&A Mode
 - 📄 **Multi-Source Document Upload** - PDF, TXT, Markdown, YouTube, Web pages
 - 🧠 **Intelligent Conversation** - Context-aware with conversation history
 - 🔍 **Semantic Search** - Vector-based retrieval with source attribution
-- 🚀 **Automatic Pipeline** - One-call upload to storage
 - 💾 **Session Management** - Multiple concurrent conversations
+- 📊 **Source Attribution** - Track which documents answer came from
+
+### Code Review Mode
+- 💻 **Multi-Language Support** - Python, JavaScript, TypeScript, Java, Go, C/C++, Rust, Ruby, PHP, Swift, Kotlin, C#, and 10+ more
+- 🔍 **Quick Review** - Fast critical issue detection
+- 📋 **Comprehensive Review** - Detailed analysis across 6 categories (quality, security, performance, best practices, bugs, testing)
+- 🔒 **Security Analysis** - OWASP Top 10 vulnerability detection
+- ⚡ **Performance Review** - Algorithm complexity and optimization suggestions
+- 🐛 **Bug Detection** - Potential bug identification with fixes
+- 💡 **Code Explanation** - Plain language code explanations
+- 🎯 **Improvement Suggestions** - Refactoring and enhancement recommendations
+- 📏 **Complexity Metrics** - LOC, functions, classes, cyclomatic complexity
+- 🏗️ **Syntax-Aware Chunking** - Preserves function/class boundaries
 
 ### Technical Features
-- 🏗️ **Modular Architecture** - Clean separation of concerns
-- 🔌 **RESTful API** - Easy frontend integration
-- 🎯 **Local LLM** - Privacy-focused with Ollama
+- 🏗️ **Modular Architecture** - Clean separation of concerns with dependency injection
+- 🔌 **RESTful API** - 20+ endpoints for documents and code
+- 🎯 **Local LLM** - Privacy-focused with Ollama (no data sent to cloud)
+- 🔄 **Hybrid System** - Both modes share same vector database for cross-referencing
+- 🚀 **Automatic Pipeline** - One-call upload to processing to storage
 - 📊 **Monitoring** - Built-in stats and health checks
 - 🛡️ **Error Handling** - Comprehensive error management
 
@@ -143,20 +161,35 @@ Server will be available at: `http://localhost:5001`
 
 **Base URL:** `http://localhost:5001`
 
-### Upload Endpoints
+**Full API Documentation:** See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete details with examples.
+
+### Document Upload Endpoints
 
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
-| `/upload/file` | POST | `file: <file>` | Upload PDF/TXT/MD |
+| `/upload/file` | POST | `file: <file>` | Upload document (PDF/TXT/MD) or code file |
 | `/upload/youtube` | POST | `{"url": "..."}` | Transcribe YouTube video |
 | `/upload/web` | POST | `{"url": "..."}` | Scrape web page |
+| `/upload/code` | POST | `file: <code_file>` | Upload code file with complexity analysis |
+
+### Code Review Endpoints
+
+| Endpoint | Method | Body | Description |
+|----------|--------|------|-------------|
+| `/review/quick` | POST | `file: <code>` | Quick review (critical issues only) |
+| `/review/comprehensive` | POST | `file: <code>` or JSON | Detailed code review with context |
+| `/review/security` | POST | `file: <code>` | Security vulnerability analysis |
+| `/review/performance` | POST | `file: <code>` | Performance optimization review |
+| `/review/explain` | POST | `file: <code>` or JSON | Explain code in plain language |
+| `/review/bugs` | POST | `file: <code>` or JSON | Detect potential bugs |
+| `/review/improve` | POST | `file: <code>` or JSON | Suggest improvements |
 
 ### Chat Endpoints
 
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
 | `/chat/new` | POST | - | Create new session |
-| `/chat` | POST | `{"question": "...", "session_id": "..."}` | Send message |
+| `/chat` | POST | `{"question": "...", "session_id": "..."}` | Ask about documents or code |
 | `/chat/history/{id}` | GET | - | Get conversation history |
 | `/chat/session/{id}` | GET | - | Get session info |
 | `/chat/clear/{id}` | DELETE | - | Clear session |
@@ -197,24 +230,28 @@ Server will be available at: `http://localhost:5001`
 ## 📁 Project Structure
 ```
 llm-chatbot/
-├── main.py                     # Flask app entry point
-├── requirements.txt            # Dependencies
-├── README.md                   # Documentation
+├── main.py                              # Flask app (500+ lines, 20+ endpoints)
+├── requirements.txt                     # Python dependencies
+├── README.md                            # This file
+├── API_DOCUMENTATION.md                 # Complete API reference
+├── TECHNICAL_DOCUMENTATION.md           # In-depth code explanations
 │
 ├── src/modules/
-│   ├── file_manager.py         # Upload & processing
-│   ├── document_processor.py   # Text extraction & chunking
-│   ├── vector_store_and_embedding.py  # Vector operations
-│   ├── llm_manager.py          # LLM management
-│   └── chat_session.py         # Session management
+│   ├── file_manager.py                  # Upload orchestration (260 lines)
+│   ├── document_processor.py            # Document text extraction & chunking (75 lines)
+│   ├── code_parser.py                   # Code parsing & syntax-aware chunking (405 lines)
+│   ├── code_review_prompts.py           # Review prompt templates (402 lines)
+│   ├── vector_store_and_embedding.py    # Vector DB operations (54 lines)
+│   ├── llm_manager.py                   # LLM chains & code review (380+ lines)
+│   └── chat_session.py                  # Session management (260 lines)
 │
 ├── test/
-│   └── test_system.py          # Test suite
+│   └── test_system.py                   # System integration tests
 │
-├── uploads/                    # Uploaded files
-│   └── media/                  # YouTube audio
+├── uploads/                             # User uploaded files
+│   └── media/                           # YouTube audio files
 │
-└── chroma_db/                  # Vector database
+└── chroma_db/                           # ChromaDB vector database
 ```
 
 ---
@@ -254,14 +291,54 @@ response = requests.post(f'{BASE_URL}/chat',
     json={'question': 'Summarize the video'})
 ```
 
-### Example 3: cURL Commands
-```bash
-# Upload web page
-curl -X POST http://localhost:5001/upload/web \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://en.wikipedia.org/wiki/Python_(programming_language)"}'
+### Example 3: Code Review Workflow
+```python
+# Upload code file
+with open('app.py', 'rb') as f:
+    response = requests.post(f'{BASE_URL}/upload/code', files={'file': f})
+    print(response.json()['complexity'])  # Get metrics
 
-# Chat
+# Quick review
+with open('app.py', 'rb') as f:
+    response = requests.post(f'{BASE_URL}/review/quick', files={'file': f})
+    print(response.json()['review'])
+
+# Security review
+with open('app.py', 'rb') as f:
+    response = requests.post(f'{BASE_URL}/review/security', files={'file': f})
+    print(response.json()['review'])
+
+# Ask questions about code via chat
+response = requests.post(f'{BASE_URL}/chat', json={
+    'question': 'How can I optimize the database queries in app.py?'
+})
+print(response.json()['answer'])
+```
+
+### Example 4: cURL Commands
+```bash
+# Upload document
+curl -X POST http://localhost:5001/upload/file \
+  -F "file=@document.pdf"
+
+# Upload code for review
+curl -X POST http://localhost:5001/upload/code \
+  -F "file=@app.py"
+
+# Quick code review
+curl -X POST http://localhost:5001/review/quick \
+  -F "file=@app.py"
+
+# Comprehensive review with JSON
+curl -X POST http://localhost:5001/review/comprehensive \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "def hello():\n    print(\"Hello\")",
+    "filename": "test.py",
+    "question": "Is this function well-written?"
+  }'
+
+# Chat with documents or code
 curl -X POST http://localhost:5001/chat \
   -H "Content-Type: application/json" \
   -d '{"question": "What is Python?"}'
@@ -327,18 +404,49 @@ Use Postman, cURL, or Python requests to test endpoints. See [Usage Examples](#-
 
 ---
 
+## 📚 Documentation
+
+This project includes comprehensive documentation:
+
+| File | Description |
+|------|-------------|
+| **README.md** (this file) | Quick start guide and overview |
+| **[API_DOCUMENTATION.md](API_DOCUMENTATION.md)** | Complete API reference with examples for all 20+ endpoints |
+| **[TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md)** | In-depth technical guide explaining every code component, design patterns, data flows, and architecture |
+
+**What's in TECHNICAL_DOCUMENTATION.md:**
+- Detailed module-by-module code explanations (1,800+ lines)
+- Complete data flow diagrams
+- Design patterns used (Dependency Injection, Strategy, Template Method, Facade, Repository)
+- SOLID principles implementation
+- Configuration & setup guide
+- Extension guide (add new languages, review types, vector DBs, file types)
+- Performance optimization strategies
+- Security considerations
+- Testing approaches
+
+---
+
 ## 🚧 Future Enhancements
+
+**Recently Added:**
+- [x] Code review functionality with multi-language support
+- [x] Syntax-aware code chunking
+- [x] Comprehensive code analysis (security, performance, bugs)
+- [x] Code complexity metrics
 
 **Planned Features:**
 - [ ] User authentication & authorization
-- [ ] Database persistence (PostgreSQL)
+- [ ] Database persistence (PostgreSQL for conversations)
 - [ ] Frontend UI (React/Vue)
-- [ ] More file formats (DOCX, PPTX, CSV)
-- [ ] Streaming responses
+- [ ] More file formats (DOCX, PPTX, CSV, Excel)
+- [ ] Streaming responses (real-time LLM output)
 - [ ] Document update/deletion
-- [ ] Export conversations
+- [ ] Export conversations (JSON, Markdown)
 - [ ] Docker containerization
 - [ ] Analytics dashboard
+- [ ] Git integration (review pull requests)
+- [ ] IDE extensions (VS Code, IntelliJ)
 
 ---
 

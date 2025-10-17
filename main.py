@@ -52,13 +52,402 @@ def upload_web():
     """
     Upload web page content
     Automatically scrapes, chunks, embeds, and stores
-    
+
     JSON or Form data:
         - url: Web page URL
     """
     result = file_manager.webFileUpload()
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
+
+
+@app.route('/upload/code', methods=['POST'])
+def upload_code():
+    """
+    Upload code file for review
+    Provides complexity analysis and code-specific chunking
+
+    Form data:
+        - file: Code file to upload (.py, .js, .ts, .java, .go, etc.)
+    """
+    result = file_manager.uploadCodeForReview()
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+
+# ==================== CODE REVIEW ENDPOINTS ====================
+
+@app.route('/review/quick', methods=['POST'])
+def quick_review():
+    """
+    Quick code review focusing on critical issues
+
+    Form data:
+        - file: Code file to review
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+
+        file = request.files['file']
+        filename = file.filename
+
+        # Read code content
+        code_content = file.read().decode('utf-8')
+
+        # Detect language
+        from src.modules.code_parser import CodeParser
+        parser = CodeParser()
+        language = parser.detect_language(filename)
+
+        if language == 'unknown':
+            return jsonify({'error': 'Unsupported file type'}), 400
+
+        # Perform quick review
+        review = llm_manager.review_code_direct(
+            code=code_content,
+            language=language,
+            source=filename,
+            review_type="quick"
+        )
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'language': language,
+            'review_type': 'quick',
+            'review': review
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/review/comprehensive', methods=['POST'])
+def comprehensive_review():
+    """
+    Comprehensive code review with detailed analysis
+
+    Form data or JSON:
+        - file: Code file to review (Form)
+        OR
+        - code: Code content as string (JSON)
+        - filename: Name of the file (JSON)
+        - question: Optional specific focus (JSON)
+    """
+    try:
+        # Handle file upload
+        if 'file' in request.files:
+            file = request.files['file']
+            filename = file.filename
+            code_content = file.read().decode('utf-8')
+            question = request.form.get('question', 'Please provide a comprehensive review.')
+        # Handle JSON request
+        elif request.is_json:
+            data = request.get_json()
+            code_content = data.get('code')
+            filename = data.get('filename', 'code_snippet')
+            question = data.get('question', 'Please provide a comprehensive review.')
+
+            if not code_content:
+                return jsonify({'error': 'No code provided'}), 400
+        else:
+            return jsonify({'error': 'No code provided'}), 400
+
+        # Detect language
+        from src.modules.code_parser import CodeParser
+        parser = CodeParser()
+        language = parser.detect_language(filename)
+
+        # Get related code from vector store for context
+        context_docs = vector_store.search(code_content[:500], k=3)
+
+        # Perform comprehensive review
+        review = llm_manager.review_code_with_context(
+            code=code_content,
+            language=language,
+            source=filename,
+            context_documents=context_docs,
+            question=question,
+            review_type="comprehensive"
+        )
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'language': language,
+            'review_type': 'comprehensive',
+            'review': review,
+            'context_used': len(context_docs)
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/review/security', methods=['POST'])
+def security_review():
+    """
+    Security-focused code review
+
+    Form data:
+        - file: Code file to review
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+
+        file = request.files['file']
+        filename = file.filename
+        code_content = file.read().decode('utf-8')
+
+        from src.modules.code_parser import CodeParser
+        parser = CodeParser()
+        language = parser.detect_language(filename)
+
+        # Get context
+        context_docs = vector_store.search(code_content[:500], k=3)
+
+        # Perform security review
+        review = llm_manager.review_code_with_context(
+            code=code_content,
+            language=language,
+            source=filename,
+            context_documents=context_docs,
+            question="Analyze for security vulnerabilities.",
+            review_type="security"
+        )
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'language': language,
+            'review_type': 'security',
+            'review': review
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/review/performance', methods=['POST'])
+def performance_review():
+    """
+    Performance-focused code review
+
+    Form data:
+        - file: Code file to review
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+
+        file = request.files['file']
+        filename = file.filename
+        code_content = file.read().decode('utf-8')
+
+        from src.modules.code_parser import CodeParser
+        parser = CodeParser()
+        language = parser.detect_language(filename)
+
+        # Get context
+        context_docs = vector_store.search(code_content[:500], k=3)
+
+        # Perform performance review
+        review = llm_manager.review_code_with_context(
+            code=code_content,
+            language=language,
+            source=filename,
+            context_documents=context_docs,
+            question="Analyze for performance issues and optimization opportunities.",
+            review_type="performance"
+        )
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'language': language,
+            'review_type': 'performance',
+            'review': review
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/review/explain', methods=['POST'])
+def explain_code():
+    """
+    Explain what code does
+
+    Form data or JSON:
+        - file: Code file (Form)
+        OR
+        - code: Code content (JSON)
+        - filename: File name (JSON)
+        - question: Specific question about code (optional)
+    """
+    try:
+        # Handle file upload
+        if 'file' in request.files:
+            file = request.files['file']
+            filename = file.filename
+            code_content = file.read().decode('utf-8')
+            question = request.form.get('question', 'What does this code do?')
+        # Handle JSON request
+        elif request.is_json:
+            data = request.get_json()
+            code_content = data.get('code')
+            filename = data.get('filename', 'code_snippet')
+            question = data.get('question', 'What does this code do?')
+
+            if not code_content:
+                return jsonify({'error': 'No code provided'}), 400
+        else:
+            return jsonify({'error': 'No code provided'}), 400
+
+        from src.modules.code_parser import CodeParser
+        parser = CodeParser()
+        language = parser.detect_language(filename)
+
+        # Get context
+        context_docs = vector_store.search(code_content[:500], k=3)
+
+        # Explain code
+        explanation = llm_manager.explain_code(
+            code=code_content,
+            language=language,
+            source=filename,
+            context_documents=context_docs,
+            question=question
+        )
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'language': language,
+            'explanation': explanation
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/review/bugs', methods=['POST'])
+def detect_bugs():
+    """
+    Detect potential bugs in code
+
+    Form data or JSON:
+        - file: Code file (Form)
+        OR
+        - code: Code content (JSON)
+        - filename: File name (JSON)
+        - issue: Reported issue description (optional)
+    """
+    try:
+        # Handle file upload
+        if 'file' in request.files:
+            file = request.files['file']
+            filename = file.filename
+            code_content = file.read().decode('utf-8')
+            issue = request.form.get('issue', '')
+        # Handle JSON request
+        elif request.is_json:
+            data = request.get_json()
+            code_content = data.get('code')
+            filename = data.get('filename', 'code_snippet')
+            issue = data.get('issue', '')
+
+            if not code_content:
+                return jsonify({'error': 'No code provided'}), 400
+        else:
+            return jsonify({'error': 'No code provided'}), 400
+
+        from src.modules.code_parser import CodeParser
+        parser = CodeParser()
+        language = parser.detect_language(filename)
+
+        # Get context
+        context_docs = vector_store.search(code_content[:500], k=3)
+
+        # Detect bugs
+        analysis = llm_manager.detect_bugs(
+            code=code_content,
+            language=language,
+            source=filename,
+            reported_issue=issue,
+            context_documents=context_docs
+        )
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'language': language,
+            'bug_analysis': analysis
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/review/improve', methods=['POST'])
+def suggest_improvements():
+    """
+    Suggest code improvements
+
+    Form data or JSON:
+        - file: Code file (Form)
+        OR
+        - code: Code content (JSON)
+        - filename: File name (JSON)
+        - goal: Improvement goal (optional)
+    """
+    try:
+        # Handle file upload
+        if 'file' in request.files:
+            file = request.files['file']
+            filename = file.filename
+            code_content = file.read().decode('utf-8')
+            goal = request.form.get('goal', '')
+        # Handle JSON request
+        elif request.is_json:
+            data = request.get_json()
+            code_content = data.get('code')
+            filename = data.get('filename', 'code_snippet')
+            goal = data.get('goal', '')
+
+            if not code_content:
+                return jsonify({'error': 'No code provided'}), 400
+        else:
+            return jsonify({'error': 'No code provided'}), 400
+
+        from src.modules.code_parser import CodeParser
+        parser = CodeParser()
+        language = parser.detect_language(filename)
+
+        # Get context
+        context_docs = vector_store.search(code_content[:500], k=3)
+
+        # Suggest improvements
+        suggestions = llm_manager.suggest_improvements(
+            code=code_content,
+            language=language,
+            source=filename,
+            goal=goal,
+            context_documents=context_docs
+        )
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'language': language,
+            'suggestions': suggestions
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 # ==================== CHAT ENDPOINTS ====================
 
