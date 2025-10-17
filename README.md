@@ -5,7 +5,6 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Flask](https://img.shields.io/badge/Flask-3.0+-green.svg)
 ![LangChain](https://img.shields.io/badge/LangChain-latest-orange.svg)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
