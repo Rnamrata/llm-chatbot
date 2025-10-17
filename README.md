@@ -96,7 +96,7 @@ ollama pull nomic-embed-text
 # Linux: sudo apt-get install ffmpeg
 
 # 4. Clone and setup project
-git clone <your-repo-url>
+git clone https://github.com/Rnamrata/llm-chatbot.git
 cd llm-chatbot
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
@@ -379,4 +379,4 @@ Contributions welcome! Please:
 
 ---
 
-**Built with ❤️ using Python, LangChain, and Ollama**
+**Built using Python, LangChain, and Ollama**
