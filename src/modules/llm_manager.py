@@ -1,30 +1,65 @@
 # src/modules/llm_manager.py
+
+# Import Ollama LLM for local language model inference (runs on your machine)
 from langchain_community.llms import Ollama
+# Import PromptTemplate for creating structured prompts with variables
 from langchain.prompts import PromptTemplate
+# Import ConversationalRetrievalChain for RAG with conversation history
 from langchain.chains import ConversationalRetrievalChain
+# Import ConversationBufferMemory for storing chat history
 from langchain.memory import ConversationBufferMemory
+# Import code review utilities from our custom prompts module
 from .code_review_prompts import (
-    get_review_prompt_template,
-    format_code_context,
-    QUICK_CODE_REVIEW_PROMPT,
-    CONVERSATIONAL_CODE_REVIEW_PROMPT
+    get_review_prompt_template,           # Factory for getting review prompt templates
+    format_code_context,                   # Formatter for code context strings
+    QUICK_CODE_REVIEW_PROMPT,             # Quick review prompt template
+    CONVERSATIONAL_CODE_REVIEW_PROMPT     # Conversational review prompt template
 )
 
 
 class LLMManager:
-    """Manages LLM initialization and query processing"""
-    
+    """
+    LLM (Large Language Model) Manager
+    ===================================
+    Manages all interactions with the local Ollama LLM including:
+    - LLM initialization and configuration
+    - Creating conversational RAG chains
+    - Direct LLM queries (without retrieval)
+    - Code review operations
+    - Source formatting
+
+    This class provides a unified interface for all LLM operations in the system.
+    It uses Ollama to run models locally (no API keys or external services needed).
+
+    Key Features:
+    - Conversational RAG (with memory and document retrieval)
+    - Direct queries (simple LLM calls)
+    - Specialized code review methods (security, performance, bugs, etc.)
+    - Source document formatting for user-friendly responses
+    """
+
     def __init__(self, model_name="llama3.2", temperature=0.7):
         """
-        Initialize LLM Manager
-        
+        Initialize the LLM Manager with specified model and settings.
+
         Args:
-            model_name: Name of the Ollama model to use
-            temperature: Temperature for response generation
+            model_name (str): Name of the Ollama model to use (default: "llama3.2")
+                             Must be a model you've already pulled with `ollama pull`
+                             Examples: "llama3.2", "mistral", "codellama"
+            temperature (float): Controls randomness in responses (0.0 to 2.0)
+                                0.0 = Deterministic, focused, consistent
+                                0.7 = Balanced (default, good for most tasks)
+                                1.0+ = More creative, varied responses
+                                For code review, lower temperature (0.3-0.5) is often better
+
+        Instance Variables:
+            self.model_name: Stored model name
+            self.temperature: Stored temperature setting
+            self.llm: Initialized Ollama LLM object (ready to use)
         """
-        self.model_name = model_name
-        self.temperature = temperature
-        self.llm = self._initialize_llm()
+        self.model_name = model_name        # Store model name for reference
+        self.temperature = temperature      # Store temperature for reference
+        self.llm = self._initialize_llm()   # Initialize the LLM object
         
     def _initialize_llm(self):
         """Initialize the Ollama LLM"""

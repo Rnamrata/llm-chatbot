@@ -177,3 +177,6 @@ temp/
 
 #chroma database
 chroma_db/
+
+
+.claude/

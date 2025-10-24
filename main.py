@@ -1,22 +1,98 @@
+"""
+LLM-Powered RAG (Retrieval-Augmented Generation) Chatbot API
+=============================================================
+This is the main Flask application that provides a REST API for:
+1. Document/Code Upload (PDF, TXT, MD, code files, YouTube, web pages)
+2. Code Review (security, performance, bugs, improvements, explanations)
+3. Conversational Chat (RAG with conversation history)
+4. Session Management (create, clear, list sessions)
+
+Architecture:
+- Flask web server handling HTTP requests
+- Ollama for local LLM inference (llama3.2)
+- Chroma vector database for embeddings
+- LangChain for RAG orchestration
+- Whisper for YouTube transcription
+
+API Endpoints:
+Upload:
+  POST /upload/file - Upload documents (PDF, TXT, MD)
+  POST /upload/code - Upload code files for review
+  POST /upload/youtube - Download and transcribe YouTube videos
+  POST /upload/web - Scrape and process web pages
+
+Code Review:
+  POST /review/quick - Quick code review (critical issues only)
+  POST /review/comprehensive - Full detailed code review
+  POST /review/security - Security-focused review
+  POST /review/performance - Performance optimization review
+  POST /review/explain - Explain what code does
+  POST /review/bugs - Detect potential bugs
+  POST /review/improve - Suggest improvements
+
+Chat:
+  POST /chat - Query with conversation history
+  POST /chat/new - Create new chat session
+  GET /chat/session/<id> - Get session info
+  GET /chat/history/<id> - Get chat history
+  DELETE /chat/clear/<id> - Clear session
+  GET /chat/sessions - List all sessions
+  POST /chat/cleanup - Cleanup inactive sessions
+
+Utility:
+  GET /stats - Database and session statistics
+  GET /health - Health check
+
+Usage:
+  python main.py
+  Server starts on http://0.0.0.0:5001
+"""
+
+# Import Flask for web server and request handling
 from flask import Flask, request, jsonify
+# Import CORS for handling Cross-Origin Resource Sharing (allows frontend from different domain)
 from flask_cors import CORS
+# Import our custom modules for RAG system
 import src.modules.file_manager as file_manager_module
 import src.modules.document_processor as document_processor_module
 import src.modules.vector_store_and_embedding as vector_store_module
 import src.modules.llm_manager as llm_manager_module
 import src.modules.chat_session as chat_session_module
+# Import UUID for generating unique session identifiers
 import uuid
+# Import os for file system operations
 import os
 
+# ==================== FLASK APPLICATION SETUP ====================
+
+# Create Flask application instance
 app = Flask(__name__)
+
+# Enable CORS (Cross-Origin Resource Sharing) for all routes
+# This allows the frontend (e.g., React app) to call this API even if hosted on different domain/port
 CORS(app)
 
+# ==================== INITIALIZE RAG SYSTEM COMPONENTS ====================
+
+# Initialize document processor for PDF/text extraction and chunking
 document_processor = document_processor_module.DocumentProcessor()
+
+# Initialize vector store for embeddings and similarity search
+# Uses Ollama's nomic-embed-text model + Chroma database
 vector_store = vector_store_module.VectorStoreAndEmbedding()
+
+# Initialize file manager for handling uploads (documents, code, YouTube, web)
 file_manager = file_manager_module.FileManager(document_processor, vector_store)
+
+# Initialize LLM manager for Ollama interactions
+# Using llama3.2 model with temperature 0.7 (balanced creativity/consistency)
 llm_manager = llm_manager_module.LLMManager(model_name="llama3.2", temperature=0.7)
+
+# Initialize chat session manager for conversational RAG
+# Manages multiple independent chat sessions with memory
 chat_manager = chat_session_module.ChatSession(llm_manager, vector_store)
 
+# ==================== API ENDPOINTS ====================
 # ==================== UPLOAD ENDPOINTS ====================
 
 @app.route('/upload/file', methods=['POST'])

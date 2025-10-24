@@ -1,12 +1,45 @@
 """
 Code Review Prompts Module
-Contains specialized prompts for code review functionality.
+==========================
+This module contains specialized prompt templates for different types of code review operations.
+Each prompt is carefully crafted to elicit specific types of analysis from the LLM.
+
+The prompts use template variables (like {code}, {language}, {context}) that are filled in
+at runtime with actual values. This allows the same prompt structure to be reused for
+different code review requests.
+
+Available Prompt Types:
+- Comprehensive: Full code review covering quality, bugs, security, performance
+- Quick: Fast review focusing on critical issues only
+- Security: Deep security vulnerability analysis
+- Performance: Performance optimization focus
+- Best Practices: Design patterns and architectural review
+- Conversational: Interactive Q&A about code
+- Explanation: Code explanation in plain language
+- Improvement: Specific improvement suggestions
+- Bug Detection: Finding bugs and potential issues
+- Comparison: Reviewing code changes (before/after)
 """
 
+# Import LangChain's PromptTemplate class for creating structured prompts with variables
 from langchain.prompts import PromptTemplate
 
 
-# Comprehensive code review prompt
+# ==================== COMPREHENSIVE CODE REVIEW PROMPT ====================
+# This is the most thorough prompt template, covering all aspects of code quality
+#
+# Template Variables:
+# - {language}: Programming language (e.g., "python", "javascript") - used for syntax highlighting
+# - {code}: The actual code to be reviewed
+# - {source}: Filename or source identifier (e.g., "main.py")
+# - {start_line}/{end_line}: Line number range in the original file
+# - {context}: Related code from the codebase retrieved via vector search
+# - {chat_history}: Previous conversation messages for continuity
+# - {question}: Specific question or focus area from the user
+#
+# This prompt instructs the LLM to perform a comprehensive multi-dimensional analysis
+# covering quality, best practices, bugs, security, performance, and maintainability
+
 COMPREHENSIVE_CODE_REVIEW_PROMPT = """You are an expert code reviewer with years of experience in software engineering best practices, security, and performance optimization.
 
 Review the following code and provide detailed, actionable feedback:
@@ -314,16 +347,55 @@ Answer:"""
 
 def get_review_prompt_template(review_type: str = "comprehensive") -> PromptTemplate:
     """
-    Get a prompt template for specific review type.
+    Factory function to get the appropriate prompt template based on review type.
+
+    This function acts as a centralized way to access different code review prompts.
+    It maps review type strings to their corresponding prompt templates and returns
+    a LangChain PromptTemplate object that can be used with LLMs.
+
+    How it works:
+    1. Takes a review_type string (e.g., "security", "performance")
+    2. Looks up the corresponding prompt template from the prompts dictionary
+    3. If not found, defaults to COMPREHENSIVE_CODE_REVIEW_PROMPT
+    4. Wraps the template string in a PromptTemplate object
+    5. Specifies the input variables that the template expects
+
+    The PromptTemplate object allows you to fill in variables like:
+    >>> template = get_review_prompt_template("security")
+    >>> filled_prompt = template.format(code="...", language="python", ...)
 
     Args:
-        review_type: Type of review (comprehensive, quick, security, performance,
-                     best_practices, conversational, explanation, improvement,
-                     bug_detection, comparison)
+        review_type (str): The type of review to perform. Options:
+            - "comprehensive": Full detailed review (default)
+            - "quick": Fast review of critical issues only
+            - "security": Security-focused analysis
+            - "performance": Performance optimization focus
+            - "best_practices": Design patterns and architecture
+            - "conversational": Interactive Q&A style
+            - "explanation": Code explanation
+            - "improvement": Improvement suggestions
+            - "bug_detection": Find bugs and issues
+            - "comparison": Compare code changes
 
     Returns:
-        PromptTemplate object
+        PromptTemplate: A LangChain PromptTemplate object configured with:
+            - template: The prompt string with {variable} placeholders
+            - input_variables: List of variable names used in the template
+                              ["code", "language", "source", "context", "chat_history", "question"]
+
+    Example:
+        >>> prompt = get_review_prompt_template("security")
+        >>> filled = prompt.format(
+        ...     code="user_input = request.form['data']",
+        ...     language="python",
+        ...     source="app.py",
+        ...     context="No context",
+        ...     chat_history="",
+        ...     question="Is this secure?"
+        ... )
     """
+    # Dictionary mapping review type names to their corresponding prompt templates
+    # This makes it easy to add new review types by just adding a new entry
     prompts = {
         "comprehensive": COMPREHENSIVE_CODE_REVIEW_PROMPT,
         "quick": QUICK_CODE_REVIEW_PROMPT,
@@ -337,49 +409,99 @@ def get_review_prompt_template(review_type: str = "comprehensive") -> PromptTemp
         "comparison": CODE_COMPARISON_PROMPT,
     }
 
+    # Look up the requested template, defaulting to comprehensive if not found
+    # This provides a safe fallback behavior
     template = prompts.get(review_type, COMPREHENSIVE_CODE_REVIEW_PROMPT)
 
+    # Create and return a LangChain PromptTemplate object
+    # The input_variables list defines what variables must be provided when using this template
     return PromptTemplate(
-        template=template,
+        template=template,  # The prompt string with {variable} placeholders
         input_variables=["code", "language", "source", "context", "chat_history", "question"]
     )
 
 
 def format_code_context(documents, max_context_length=1500):
     """
-    Format retrieved documents as context for code review.
+    Format retrieved code documents into a readable context string for the LLM.
+
+    When performing code review, we often want to provide the LLM with related code
+    from the same codebase for better understanding. This function takes Document
+    objects retrieved from the vector store and formats them into a nice markdown
+    string that can be included in the prompt.
+
+    The function:
+    1. Extracts metadata from each document (filename, language, line numbers)
+    2. Formats each piece of code in a markdown code block with syntax highlighting
+    3. Respects a maximum length limit to avoid overwhelming the LLM
+    4. Truncates individual documents if they're too long (keeps first 500 chars)
 
     Args:
-        documents: List of Document objects from vector store
-        max_context_length: Maximum characters for context
+        documents (List[Document]): List of LangChain Document objects retrieved
+                                   from the vector store. Each should have:
+                                   - page_content: The code text
+                                   - metadata: Dict with 'source', 'language', 'start_line', 'end_line'
+        max_context_length (int): Maximum total characters for all context.
+                                 Default 1500 to keep prompts manageable.
+                                 Prevents token limit issues with the LLM.
 
     Returns:
-        Formatted context string
+        str: Formatted markdown string containing code snippets, or a message
+             indicating no context is available.
+
+    Example output:
+        **From utils.py (lines 10-25):**
+        ```python
+        def calculate_total(items):
+            return sum(item.price for item in items)
+        ```
+
+        **From models.py (lines 5-15):**
+        ```python
+        class Item:
+            def __init__(self, price):
+                self.price = price
+        ```
     """
+    # Handle empty document list
     if not documents:
         return "No additional context available."
 
+    # List to collect formatted pieces of context
     context_parts = []
+
+    # Track total length to respect max_context_length limit
     current_length = 0
 
+    # Process each retrieved document
     for doc in documents:
-        # Format each document
-        source = doc.metadata.get('source', 'unknown')
-        language = doc.metadata.get('language', 'unknown')
-        start_line = doc.metadata.get('start_line', '')
-        end_line = doc.metadata.get('end_line', '')
+        # Extract metadata (use defaults if keys don't exist)
+        source = doc.metadata.get('source', 'unknown')           # Filename
+        language = doc.metadata.get('language', 'unknown')       # Programming language
+        start_line = doc.metadata.get('start_line', '')          # Starting line number
+        end_line = doc.metadata.get('end_line', '')              # Ending line number
 
+        # Format line number info if available (e.g., "(lines 10-25)")
         line_info = f"(lines {start_line}-{end_line})" if start_line else ""
 
+        # Create a formatted markdown string for this code snippet
+        # Truncate code to 500 chars to avoid very long snippets
+        # Format: **From filename (lines X-Y):**\n```language\ncode\n```
         part = f"\n**From {source} {line_info}:**\n```{language}\n{doc.page_content[:500]}\n```\n"
 
+        # Check if adding this part would exceed our length limit
         if current_length + len(part) > max_context_length:
+            # Stop adding more context - we've hit the limit
             break
 
+        # Add this formatted snippet to our list
         context_parts.append(part)
+        # Update our running total
         current_length += len(part)
 
+    # If we didn't add any context (maybe all were too long), return message
     if not context_parts:
         return "No additional context available."
 
+    # Join all context parts with newlines and return
     return "\n".join(context_parts)

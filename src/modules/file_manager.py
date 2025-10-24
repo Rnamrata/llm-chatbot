@@ -1,26 +1,65 @@
+# Import Flask request object for handling file uploads from HTTP requests
 from flask import request
+# Import yt_dlp for downloading YouTube videos and audio
 import yt_dlp
+# Import os for file system operations
 import os
+# Import sys for system-specific parameters (not currently used)
 import sys
+# Import LangChain Document class for structured document handling
 from langchain.schema import Document
+# Import OpenAI's Whisper model for speech-to-text transcription
 import whisper
+# Import LangChain web loader for scraping web pages
 from langchain.document_loaders import WebBaseLoader
+# Import our custom code parser for intelligent code chunking
 from .code_parser import CodeParser
 
 
 class FileManager:
+    """
+    File Upload and Processing Manager
+    ===================================
+    Handles all file upload operations for the RAG system including:
+    - Documents (PDF, TXT, MD)
+    - Code files (Python, JavaScript, TypeScript, etc.)
+    - YouTube videos (download + transcribe)
+    - Web pages (scrape + process)
+
+    This is the orchestrator that coordinates between:
+    - File extraction/download
+    - Content processing (DocumentProcessor or CodeParser)
+    - Vector storage (VectorStoreAndEmbedding)
+
+    Workflow for all file types:
+    1. Receive file/URL from Flask request
+    2. Extract/download content
+    3. Process and chunk content (using appropriate processor)
+    4. Embed and store in vector database
+    5. Return success/error response
+    """
+
     def __init__(self, document_processor, vector_store, code_parser=None):
         """
-        Initialize FileManager with dependencies
+        Initialize FileManager with required dependencies.
+
+        The FileManager acts as a coordinator, using other modules to handle
+        the actual processing, chunking, and storage.
 
         Args:
-            document_processor: DocumentProcessor instance
-            vector_store: VectorStoreAndEmbedding instance
-            code_parser: CodeParser instance (optional, created if not provided)
+            document_processor (DocumentProcessor): Handles PDF/text extraction and chunking
+            vector_store (VectorStoreAndEmbedding): Handles embedding and vector storage
+            code_parser (CodeParser, optional): Handles code-specific parsing and chunking
+                                               Creates new instance if not provided
+
+        Instance Variables:
+            self.document_processor: For processing documents (PDFs, text files)
+            self.vector_store: For embedding and storing chunks
+            self.code_parser: For processing code files intelligently
         """
-        self.document_processor = document_processor
-        self.vector_store = vector_store
-        self.code_parser = code_parser if code_parser else CodeParser()
+        self.document_processor = document_processor  # For documents (PDF, TXT, MD)
+        self.vector_store = vector_store              # For vector storage
+        self.code_parser = code_parser if code_parser else CodeParser()  # For code files
 
     def uploadFile(self):
         """
