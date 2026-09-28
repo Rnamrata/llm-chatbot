@@ -5,7 +5,7 @@ import sys
 from langchain.schema import Document
 import whisper
 from langchain.document_loaders import WebBaseLoader
-
+from werkzeug.utils import secure_filename
 
 class FileManager:
     def __init__(self, document_processor, vector_store):
@@ -19,6 +19,11 @@ class FileManager:
         self.document_processor = document_processor
         self.vector_store = vector_store
 
+        os.makedirs("uploads", exist_ok=True)
+        os.makedirs("uploads/media", exist_ok=True)
+
+        self.whisper_model = whisper.load_model("base")
+
     def uploadFile(self):
         """
         Upload file from device
@@ -26,8 +31,8 @@ class FileManager:
         """
         try:
             uploaded_file = request.files['file']
-            filename = uploaded_file.filename
-            destination = 'uploads/' + uploaded_file.filename
+            filename = secure_filename(uploaded_file.filename)
+            destination = 'uploads/' + filename
             uploaded_file.save(destination)
 
             # Extract content based on file type
@@ -76,21 +81,20 @@ class FileManager:
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=True)
+            downloaded_path = ydl.prepare_filename(info)
 
         # Find the downloaded audio file
-        audio_files = [f for f in os.listdir(save_dir) if f.endswith(('.mp3', '.m4a', '.wav'))]
+        audio_path = os.path.splitext(downloaded_path)[0] + '.mp3'
 
-        if not audio_files:
+        if not os.path.exists(audio_path):
             return None  # No audio file found   
-        return os.path.join(save_dir, audio_files[0])
+        return audio_path
 
     def transcribeAudioFile(self, audio_file_path, url):
-        whisper_model = whisper.load_model("base")
-
         # Transcribe
         print(f"Transcribing {audio_file_path}...")
-        result = whisper_model.transcribe(audio_file_path)
+        result = self.whisper_model.transcribe(audio_file_path)
         
         doc = Document(
             page_content=result["text"],

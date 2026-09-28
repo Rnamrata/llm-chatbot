@@ -181,3 +181,7 @@ chroma_db/
 #cache
 __pycache__/
 *.pyc
+
+#claude
+*.claude
+.claude/

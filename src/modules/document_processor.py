@@ -1,5 +1,3 @@
-from flask import request
-import os
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.text_splitter import MarkdownHeaderTextSplitter
 from langchain.schema import Document
@@ -61,15 +59,20 @@ class DocumentProcessor:
         if not content:
             print("No content to chunk")
             return []
-        
-        # Create Document object
-        doc = Document(page_content=content, metadata=metadata)
-        
-        # Apply markdown splitting
-        md_splits = self.markdown_splitter.split_text(doc.page_content)
-        
-        # Apply recursive splitting
-        final_chunks = self.recursive_splitter.split_documents(md_splits)
+
+        source = metadata.get("source", "")
+
+        if source.endswith(".md"):
+            # MarkdownHeaderTextSplitter only keeps header info in metadata,
+            # so re-attach the original metadata (source, type, ...) afterward
+            md_splits = self.markdown_splitter.split_text(content)
+            for split in md_splits:
+                split.metadata.update(metadata)
+            final_chunks = self.recursive_splitter.split_documents(md_splits)
+        else:
+            # Create Document object
+            doc = Document(page_content=content, metadata=metadata)
+            final_chunks = self.recursive_splitter.split_documents([doc])
         
         print(f"Created {len(final_chunks)} chunks")
         return final_chunks

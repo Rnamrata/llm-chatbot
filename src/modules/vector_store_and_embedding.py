@@ -1,6 +1,5 @@
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain.vectorstores import Chroma
-import numpy as np
 from langchain.schema import Document
 
 class VectorStoreAndEmbedding:
@@ -40,7 +39,6 @@ class VectorStoreAndEmbedding:
         
         # Add to vector store
         self.vectorstore.add_documents(documents)
-        print(self.vectorstore._collection.count())
         print(f"Stored {len(documents)} chunks in vector database")
         return {
             'data': 'Chunks embedded and stored successfully',
