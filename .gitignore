@@ -177,3 +177,7 @@ temp/
 
 #chroma database
 chroma_db/
+
+#cache
+__pycache__/
+*.pyc
