@@ -1,19 +1,21 @@
-from langchain_community.embeddings import OllamaEmbeddings
-from langchain.vectorstores import Chroma
+from langchain_ollama import OllamaEmbeddings
+from langchain_chroma import Chroma
 from langchain.schema import Document
+from src import config
 
 class VectorStoreAndEmbedding:
     def __init__(self):
         # Initialize embeddings
         self.embeddings = OllamaEmbeddings(
-            model="nomic-embed-text"
+            model=config.EMBEDDING_MODEL,
+            base_url=config.OLLAMA_BASE_URL
         )
 
         # Initialize vector store
         self.vectorstore = Chroma(
-            collection_name="my_documents",
+            collection_name=config.CHROMA_COLLECTION,
             embedding_function=self.embeddings,
-            persist_directory="./chroma_db"
+            persist_directory=str(config.CHROMA_PERSIST_DIR)
         )
 
     def store_chunks(self, chunks):
@@ -45,7 +47,57 @@ class VectorStoreAndEmbedding:
             'count': len(documents)
         }
     
-    def search(self, query, k=5):
-        """Search for similar chunks"""
-        results = self.vectorstore.max_marginal_relevance_search(query, k=k)
+    def search(self, query, k=5, filter=None):
+        """
+        Search for similar chunks
+
+        Args:
+            query: Search text
+            k: Number of results to return
+            filter: Optional Chroma metadata filter (e.g. {"review_id": "abc123"})
+                    to scope the search to a specific review/session's chunks
+        """
+        results = self.vectorstore.max_marginal_relevance_search(query, k=k, filter=filter)
         return results
+
+    def get_retriever(self, k=None, filter=None):
+        """
+        Build a retriever, optionally scoped to a metadata filter
+
+        Args:
+            k: Number of documents to retrieve (defaults to config.RETRIEVAL_K)
+            filter: Optional Chroma metadata filter (e.g. {"session_id": "abc123"})
+                    so a review session only retrieves its own code/findings,
+                    not unrelated documents in the same collection
+
+        Returns:
+            A LangChain retriever
+        """
+        search_kwargs = {"k": k or config.RETRIEVAL_K}
+        if filter:
+            search_kwargs["filter"] = filter
+        return self.vectorstore.as_retriever(search_kwargs=search_kwargs)
+
+    def delete_by(self, filter):
+        """
+        Delete chunks matching a metadata filter
+
+        Args:
+            filter: Chroma "where" metadata filter, e.g. {"review_id": "abc123"}
+                    or {"session_id": "abc123"}
+
+        Returns:
+            dict: {'success': True, 'filter': filter} or {'error': str}
+        """
+
+        if not filter:
+            print("Error: No filter provided, skipping delete")
+            return {'error': 'No filter provided'}
+
+        try:
+            self.vectorstore.delete(where=filter)
+            print(f"Deleted chunks matching filter: {filter}")
+            return {'success': True, 'filter': filter}
+        except Exception as e:
+            print(f"Error deleting chunks with filter {filter}: {e}")
+            return {'error': str(e)}
