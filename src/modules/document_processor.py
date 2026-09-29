@@ -2,7 +2,7 @@ import os
 from src import config
 from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
 from langchain.text_splitter import MarkdownHeaderTextSplitter
-from langchain.schema import Document
+from langchain_core.documents import Document
 from PyPDF2 import PdfReader
 
 class DocumentProcessor:

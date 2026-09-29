@@ -2,7 +2,7 @@ from flask import request
 import yt_dlp
 import os
 import sys
-from langchain.schema import Document
+from langchain_core.documents import Document
 import whisper
 from langchain.document_loaders import WebBaseLoader
 from werkzeug.utils import secure_filename
