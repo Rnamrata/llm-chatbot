@@ -5,6 +5,7 @@ import src.modules.document_processor as document_processor_module
 import src.modules.vector_store_and_embedding as vector_store_module
 import src.modules.llm_manager as llm_manager_module
 import src.modules.chat_session as chat_session_module
+import src.modules.review_client as review_client_module
 import uuid
 import os
 
@@ -13,7 +14,8 @@ CORS(app)
 
 document_processor = document_processor_module.DocumentProcessor()
 vector_store = vector_store_module.VectorStoreAndEmbedding()
-file_manager = file_manager_module.FileManager(document_processor, vector_store)
+review_client = review_client_module.ReviewClient()
+file_manager = file_manager_module.FileManager(document_processor, vector_store, review_client)
 llm_manager = llm_manager_module.LLMManager(model_name="llama3.2", temperature=0.7)
 chat_manager = chat_session_module.ChatSession(llm_manager, vector_store)
 
@@ -28,7 +30,11 @@ def upload_file():
     Form data:
         - file: The file to upload (PDF, TXT, MD)
     """
-    result = file_manager.uploadFile()
+    file = request.files.get('file')
+    if not file:
+       return jsonify({'error': 'No file provided', 'success': False}), 400
+    result = file_manager.uploadFile(file)
+
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
 
@@ -42,7 +48,9 @@ def upload_youtube():
     JSON or Form data:
         - url: YouTube video URL
     """
-    result = file_manager.uploadMediaFile()
+    url = request.form.get('url') or (request.get_json(silent=True) or {}).get('url')
+    result = file_manager.uploadMediaFile(url)
+    
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
 
@@ -56,7 +64,30 @@ def upload_web():
     JSON or Form data:
         - url: Web page URL
     """
-    result = file_manager.webFileUpload()
+    url = request.form.get('url') or (request.get_json(silent=True) or {}).get('url')
+    result = file_manager.webFileUpload(url)
+
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+@app.route('/upload/code', methods=['POST'])
+def upload_code():
+    """
+    Upload code file for review
+    Automatically validates, chunks, embeds, and stores
+    
+    JSON or Form data:
+        - file: The code file to upload (required)
+        - session_id: Session ID for code review (required)
+    """
+    file = request.files.get('file')
+    session_id = request.form.get('session_id') or (request.get_json(silent=True) or {}).get('session_id')
+    if not file:
+        return jsonify({'error': 'No file provided', 'success': False}), 400
+    if not session_id:
+        return jsonify({'error': 'No session_id provided', 'success': False}), 400
+    result = file_manager.uploadCodeForReview(file, session_id)
+    
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
 
