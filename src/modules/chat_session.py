@@ -35,17 +35,19 @@ class ChatSession:
             return session_id
         
         # Create retriever from vector store
-        retriever = self.vector_store.vectorstore.as_retriever(
-            search_kwargs={"k": k}
-        )
+        retriever = self.vector_store.get_retriever(k=k)
         
         # Create conversational chain using LLM manager
-        chain, memory = self.llm_manager.create_conversational_chain(retriever, k)
+        chain, memory = self.llm_manager.create_conversational_chain(retriever, mode="docs")
         
         # Store session data
         self.sessions[session_id] = {
             'chain': chain,
             'memory': memory,
+            'mode': 'docs',
+            'review_id': None,
+            'k': k,
+            'message_timestamps': [],
             'created_at': datetime.now(),
             'last_activity': datetime.now(),
             'message_count': 0
@@ -53,6 +55,44 @@ class ChatSession:
         
         print(f"✅ Created new session: {session_id}")
         return session_id
+
+    def attach_review(self, session_id, review_id, summary):
+        """
+        Rebuild a session's chain in code-review mode, scoped to one review's
+        chunks, and seed the conversation with the review summary as the
+        opening assistant message
+
+        Args:
+            session_id: Session to attach the review to (created if missing)
+            review_id: The review_id to scope retrieval to (set by uploadCodeForReview)
+            summary: Opening summary text, e.g. from LLMManager.summarize_review
+
+        Returns:
+            dict: {'success': True, 'session_id': ..., 'review_id': ...}
+        """
+        if session_id not in self.sessions:
+            self.create_session(session_id)
+            
+        session = self.sessions[session_id]
+        retriever = self.vector_store.get_retriever(k=session['k'], filter={'review_id': review_id})
+        chain, memory = self.llm_manager.create_conversational_chain(retriever, mode="code_review")
+
+        memory.chat_memory.add_ai_message(summary)
+
+        session['chain'] = chain
+        session['memory'] = memory
+        session['mode'] = 'code_review'
+        session['review_id'] = review_id
+        session['message_timestamps'] = [datetime.now()]
+        session['last_activity'] = datetime.now()
+
+        print(f"🔗 Attached review {review_id} to session: {session_id}")
+
+        return{
+            'success': True,
+            'session_id': session_id,
+            'review_id': review_id
+        }
     
     def query(self, question, session_id, k=5):
         """
@@ -72,20 +112,30 @@ class ChatSession:
                 self.create_session(session_id, k)
             
             session = self.sessions[session_id]
-            
+
+            # If a different k comes in, update the retriever in place —
+            # this keeps the existing chain/memory, so history isn't lost
+            if k != session['k']:
+                filter = {'review_id': session['review_id']} if session['review_id'] else None
+                session['chain'].retriever = self.vector_store.get_retriever(k=k, filter=filter)
+                session['k'] = k
+
             # Run the chain
             result = session['chain']({"question": question})
             
             # Update session metadata
-            session['last_activity'] = datetime.now()
+            now = datetime.now()
+            session['last_activity'] = now
             session['message_count'] += 1
-            
+            # The chain just appended one human + one AI message to memory
+            session['message_timestamps'].extend([now, now])
+
             # Format sources using LLM manager
             sources = self.llm_manager.format_sources(
                 result.get('source_documents', [])
             )
             
-            return {
+            response = {
                 'success': True,
                 'answer': result['answer'].strip(),
                 'sources': sources,
@@ -93,6 +143,11 @@ class ChatSession:
                 'session_id': session_id,
                 'message_count': session['message_count']
             }
+
+            if session['review_id']:
+                response['review_id'] = session['review_id']
+
+            return response
             
         except Exception as e:
             print(f"Error during query: {e}")
@@ -148,16 +203,33 @@ class ChatSession:
         session = self.sessions[session_id]
         memory = session['memory']
         messages = memory.chat_memory.messages
+        timestamps = session.get('message_timestamps', [])
+
+        def timestamp_at(i):
+            if i < len(timestamps):
+                return timestamps[i].isoformat()
+            return session['created_at'].isoformat()
         
-        # Format history as Q&A pairs
+        # Format history as Q&A pairs. A standalone assistant message (e.g.
+        # the review summary injected by attach_review) has no paired question.
         history = []
-        for i in range(0, len(messages), 2):
-            if i + 1 < len(messages):
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+            if msg.type == 'human' and i + 1 < len(messages) and messages[i + 1].type == 'ai':
                 history.append({
-                    'question': messages[i].content,
+                    'question': msg.content,
                     'answer': messages[i + 1].content,
-                    'timestamp': session['created_at'].isoformat()
+                    'timestamp': timestamp_at(i+1)
                 })
+                i+=2
+            else:
+                history.append({
+                    'question': None,
+                    'answer': msg.content,
+                    'timestamp': timestamp_at(i)
+                })
+                i+=1
         
         return {
             'history': history,
@@ -177,7 +249,13 @@ class ChatSession:
             dict: Result of clearing operation
         """
         if session_id in self.sessions:
+            if session_id in self.sessions:
+                session = self.sessions[session_id]
+                if session.get('review_id'):
+                    self.vector_store.delete_by({'review_id': session['review_id']})
+            
             del self.sessions[session_id]
+
             print(f"🗑️  Cleared session: {session_id}")
             return {
                 'success': True,
@@ -248,6 +326,9 @@ class ChatSession:
         ]
         
         for session_id in inactive_sessions:
+            review_id = self.sessions[session_id].get('review_id')
+            if review_id:
+                self.vector_store.delete_by({'review_id': review_id})
             del self.sessions[session_id]
         
         print(f"🧹 Cleaned up {len(inactive_sessions)} inactive sessions")

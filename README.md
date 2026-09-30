@@ -45,13 +45,30 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 
 ## 🏛️ Architecture
 ```
-Client → Flask API → FileManager/ChatSession → DocumentProcessor/LLMManager 
-                                            → VectorStore → Ollama
+┌─────────────────────────────┐
+│   Client (frontend/API caller) │
+└───────────────┬─────────────┘
+                │  REST (CORS)
+                ▼
+┌─────────────────────────────┐
+│        llm-chatbot            │
+│       Flask API :5001          │
+│  FileManager / ChatSession       │
+│  DocumentProcessor / LLMManager   │
+└───────┬─────────────────┬───────┘
+        │                 │
+        ▼                 ▼
+┌───────────────┐  ┌──────────────────┐
+│     Ollama      │  │      ChromaDB       │
+│  LLM + embeddings │  │   vector store       │
+│    :11434          │  │   ./chroma_db         │
+└───────────────┘  └──────────────────┘
 ```
 
 **Data Flow:**
 1. **Upload:** Document → Extract → Chunk → Embed → Store
 2. **Chat:** Question → Retrieve Context → LLM → Answer with Sources
+3. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → chat session scoped to that review via `review_id`
 
 ---
 
@@ -105,34 +122,45 @@ pip install -r requirements.txt
 mkdir -p uploads/media chroma_db
 ```
 
-### requirements.txt
-```txt
-flask==3.0.0
-flask-cors==4.0.0
-langchain==0.1.0
-langchain-community==0.0.10
-chromadb==0.4.22
-openai-whisper==20231117
-yt-dlp==2023.12.30
-PyPDF2==3.0.1
-requests==2.31.0
-numpy==1.24.3
+### Environment Variables
+
+Copy the example file and adjust as needed:
+```bash
+cp .env.example .env
 ```
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `FLASK_HOST` / `FLASK_PORT` / `FLASK_DEBUG` | `0.0.0.0` / `5001` / `false` | Flask server bind address |
+| `CORS_ORIGINS` | `http://localhost:4200` | Comma-separated list of allowed frontend origins |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Where Ollama is running |
+| `LLM_MODEL` / `LLM_TEMPERATURE` | `llama3.2` / `0.7` | Chat model and temperature |
+| `REVIEW_LLM_TEMPERATURE` | `0.2` | Lower temperature used for code-review chat mode |
+| `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model |
+| `CHROMA_PERSIST_DIR` / `CHROMA_COLLECTION` | `./chroma_db` / `my_documents` | Vector store location/collection |
+| `RETRIEVAL_K` | `5` | Default number of chunks retrieved per query |
+| `UPLOAD_DIR` / `MEDIA_DIR` | `./uploads` / `./uploads/media` | Where uploaded files/audio are saved |
+| `MAX_UPLOAD_MB` | `20` | Max upload size |
+| `WHISPER_MODEL` | `base` | Whisper model for YouTube transcription |
+| `REVIEW_SERVICE_URL` / `REVIEW_TIMEOUT_SECONDS` | `http://localhost:4000` / `60` | Where the code review service is running |
 
 ---
 
 ## 🚀 Quick Start
+
+Start Ollama before the Flask server — the server depends on it being up:
+
 ```bash
-# Terminal 1: Start Ollama
+# Terminal 1: Ollama (LLM + embeddings)
 ollama serve
 
-# Terminal 2: Start Flask Server
+# Terminal 2: Flask server
 cd llm-chatbot
 source .venv/bin/activate
 python main.py
 
-# Terminal 3: Test
-python test_system.py
+# Terminal 3 (optional): manual smoke test against the running server
+python scripts/smoke_test.py
 ```
 
 Server will be available at: `http://localhost:5001`
@@ -150,6 +178,14 @@ Server will be available at: `http://localhost:5001`
 | `/upload/file` | POST | `file: <file>` | Upload PDF/TXT/MD |
 | `/upload/youtube` | POST | `{"url": "..."}` | Transcribe YouTube video |
 | `/upload/web` | POST | `{"url": "..."}` | Scrape web page |
+| `/upload/code` | POST | `file: <code file>`, `session_id` | Upload code for review without attaching it to a chat session |
+
+### Code Review Endpoints
+
+| Endpoint | Method | Body | Description |
+|----------|--------|------|-------------|
+| `/review` | POST | `file: <code file>`, `session_id` (optional) | Review a code file, store the code + findings, and attach the review to a chat session (creates one if `session_id` is omitted) |
+| `/review/{review_id}` | GET | - | Reload a previously stored review's code and findings |
 
 ### Chat Endpoints
 
@@ -167,8 +203,8 @@ Server will be available at: `http://localhost:5001`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/stats` | GET | Database statistics |
+| `/health` | GET | Health check — also reports Ollama reachability and review-service status |
+| `/stats` | GET | Database statistics — also includes total stored reviews |
 
 ### Example Responses
 
@@ -206,10 +242,21 @@ llm-chatbot/
 │   ├── document_processor.py   # Text extraction & chunking
 │   ├── vector_store_and_embedding.py  # Vector operations
 │   ├── llm_manager.py          # LLM management
-│   └── chat_session.py         # Session management
+│   ├── chat_session.py         # Session management
+│   └── review_client.py        # Code review service client
 │
-├── test/
-│   └── test_system.py          # Test suite
+├── src/config.py                # Central configuration (reads .env)
+├── .env.example                 # Environment variable template
+├── pytest.ini                   # pytest configuration
+│
+├── tests/                       # Automated tests (pytest, fully mocked)
+│   ├── conftest.py
+│   ├── test_api.py
+│   ├── test_document_processor.py
+│   └── test_review_client.py
+│
+├── scripts/
+│   └── smoke_test.py            # Manual smoke test (needs real servers running)
 │
 ├── uploads/                    # Uploaded files
 │   └── media/                  # YouTube audio
@@ -274,9 +321,14 @@ curl http://localhost:5001/stats
 
 ## 🧪 Testing
 
-### Automated Tests
+### Unit/Integration Tests (mocked — no servers needed)
 ```bash
-python test_system.py
+pytest
+```
+
+### Manual Smoke Test (needs Ollama + this server running)
+```bash
+python scripts/smoke_test.py
 ```
 
 ### Manual Testing
