@@ -184,6 +184,22 @@ def test_cleanup():
         return True
     return False
 
+def test_review_upload():
+    print_separator("Test 5: Code Review Upload")
+    code = b"def add(a,b):\n   return a + b\n"
+    try:
+        response = requests.post(
+            f'{BASE_URL}/review',
+            files={'file': ('sample.py', code, 'text/x-python')}, 
+            timeout = 60
+        )
+        result = response.json()
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+    print(json.dumps(result, indent=2))
+    return result.get('success', False)
+
 def main():
     print("\n🧪 Testing RAG System\n")
     
@@ -201,7 +217,8 @@ def main():
     results = {
         'health': test_health(),
         'stats': test_stats(),
-        # 'file_upload': test_file_upload(),  # Uncomment if you have test.pdf
+        # 'file_upload': test_file_upload(),  # Uncomment for test.pdf
+        'review': test_review_upload(),
         'web_upload': test_web_upload(),
         'chat': test_chat_session(),
         # 'cleanup': test_cleanup(),  # Uncomment to test cleanup
