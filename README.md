@@ -45,24 +45,26 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 
 ## 🏛️ Architecture
 ```
-┌─────────────────────────────┐
-│   Client (frontend/API caller) │
-└───────────────┬─────────────┘
-                │  REST (CORS)
-                ▼
-┌─────────────────────────────┐
-│        llm-chatbot            │
-│       Flask API :5001          │
-│  FileManager / ChatSession       │
-│  DocumentProcessor / LLMManager   │
-└───────┬─────────────────┬───────┘
-        │                 │
-        ▼                 ▼
-┌───────────────┐  ┌──────────────────┐
-│     Ollama      │  │      ChromaDB       │
-│  LLM + embeddings │  │   vector store       │
-│    :11434          │  │   ./chroma_db         │
-└───────────────┘  └──────────────────┘
+     ┌──────────────────────────────────┐
+     │  Client (frontend / API caller)  │
+     └──────────────────────────────────┘
+                      │
+                 REST (CORS)
+                      ▼
+     ┌──────────────────────────────────┐
+     │           llm-chatbot            │
+     │         Flask API :5001          │
+     │    FileManager / ChatSession     │
+     │  DocumentProcessor / LLMManager  │
+     └──────────────────────────────────┘
+                       │
+           ┌───────────┴─────────────┐
+           │                         │
+┌────────────────────┐      ┌────────────────┐
+│       Ollama       │      │    ChromaDB    │
+│  LLM + embeddings  │      │  vector store  │
+│       :11434       │      │  ./chroma_db   │
+└────────────────────┘      └────────────────┘
 ```
 
 **Data Flow:**
