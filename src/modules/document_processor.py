@@ -1,7 +1,6 @@
 import os
 from src import config
-from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
-from langchain.text_splitter import MarkdownHeaderTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, Language, MarkdownHeaderTextSplitter
 from langchain_core.documents import Document
 from PyPDF2 import PdfReader
 

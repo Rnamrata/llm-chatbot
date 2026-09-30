@@ -16,7 +16,7 @@ document_processor = document_processor_module.DocumentProcessor()
 vector_store = vector_store_module.VectorStoreAndEmbedding()
 review_client = review_client_module.ReviewClient()
 file_manager = file_manager_module.FileManager(document_processor, vector_store, review_client)
-llm_manager = llm_manager_module.LLMManager(model_name="llama3.2", temperature=0.7)
+llm_manager = llm_manager_module.LLMManager()
 chat_manager = chat_session_module.ChatSession(llm_manager, vector_store)
 
 # ==================== UPLOAD ENDPOINTS ====================
@@ -87,7 +87,7 @@ def upload_code():
     if not session_id:
         return jsonify({'error': 'No session_id provided', 'success': False}), 400
     result = file_manager.uploadCodeForReview(file, session_id)
-    
+
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
 
