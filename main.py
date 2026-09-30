@@ -6,17 +6,19 @@ import src.modules.vector_store_and_embedding as vector_store_module
 import src.modules.llm_manager as llm_manager_module
 import src.modules.chat_session as chat_session_module
 import src.modules.review_client as review_client_module
+from src import config
 import uuid
-import os
+import requests 
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=config.CORS_ORIGINS)
+app.config['MAX_CONTENT_LENGTH'] = config.MAX_UPLOAD_BYTES
 
 document_processor = document_processor_module.DocumentProcessor()
 vector_store = vector_store_module.VectorStoreAndEmbedding()
 review_client = review_client_module.ReviewClient()
 file_manager = file_manager_module.FileManager(document_processor, vector_store, review_client)
-llm_manager = llm_manager_module.LLMManager()
+llm_manager = llm_manager_module.LLMManager(model_name=None, temperature=None)
 chat_manager = chat_session_module.ChatSession(llm_manager, vector_store)
 
 # ==================== UPLOAD ENDPOINTS ====================
@@ -90,6 +92,92 @@ def upload_code():
 
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
+
+@app.route('/review', methods=['POST'])
+def review_code():
+    """
+    Upload a code file for automated review, attached to a chat session
+    Automatically: Review (Node) → Store → Attach to session
+
+    Form data:
+        - file: The code file to review (required)
+        - session_id: Existing session to attach the review to (optional,
+                       a new session is created if omitted)
+    """
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'error': 'No file provided', 'success': False}), 400
+
+    session_id = request.form.get('session_id') or (request.get_json(silent=True) or {}).get('session_id')
+    if not session_id:
+        session_id = chat_manager.create_session()
+
+    result = file_manager.uploadCodeForReview(file, session_id)
+    if not result.get('success'):
+        return jsonify(result), 400
+
+    summary = llm_manager.summarize_review(result['findings'])
+    chat_manager.attach_review(session_id, result['review_id'], summary)
+
+    response = {
+        'success': True,
+        'session_id': session_id,
+        'review_id': result['review_id'],
+        'summary': summary,
+        'findings': result['findings'],
+        'code': result['code'],
+        'language': result['language']
+    }
+
+    if result.get('warning'):
+        response['warning'] = result['warning']
+
+    return jsonify(response)
+
+@app.route('/review/<review_id>', methods=['GET'])
+def get_review(review_id):
+    """
+    Get a previously stored review's code and findings by review_id
+    So Angular can reload a review after a page refresh
+    """
+    try:
+        result = vector_store.vectorstore.get(
+            where={'review_id': review_id},
+            include=['documents', 'metadatas']
+        )
+
+        if not result['ids']:
+            return jsonify({'error': 'Review not found', 'success': False}), 404
+
+        findings = []
+        code = None
+        filename = None
+        language = None
+
+        for doc_text, metadata in zip(result['documents'], result['metadatas']):
+            doc_type = metadata.get('type')
+            if doc_type == 'code_review_source':
+                code = doc_text
+                filename = metadata.get('source')
+                language = metadata.get('language')
+            elif doc_type == 'review_finding':
+                findings.append({
+                    'file': metadata.get('file'),
+                    'line': metadata.get('line'),
+                    'severity': metadata.get('severity'),
+                    'message': metadata.get('message')
+                })
+
+        return jsonify({
+            'success': True,
+            'review_id': review_id,
+            'filename': filename,
+            'language': language,
+            'code': code,
+            'findings': findings
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
 
 # ==================== CHAT ENDPOINTS ====================
 
@@ -176,10 +264,16 @@ def stats():
     try:
         count = vector_store.vectorstore._collection.count()
         sessions = chat_manager.list_sessions()
+
+        reviews = vector_store.vectorstore.get(
+            where={'type': 'code_review_source'},
+            include=[]
+        )
         
         return jsonify({
             'total_chunks': count,
             'total_sessions': sessions['total_sessions'],
+            'total_reviews': len(reviews['ids']),
             'status': 'ready' if count > 0 else 'empty',
             'message': f'Vector database contains {count} chunks'
         })
@@ -190,11 +284,20 @@ def stats():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
+    try:
+        ollama_response = requests.get(config.OLLAMA_BASE_URL, timeout=2)
+        ollama_status = 'healthy' if ollama_response.status_code == 200 else f'unhealthy ({ollama_response.status_code})'
+    except requests.exceptions.RequestException as e:
+        ollama_status = f'unreachable: {e}'
+
+    review_status = review_client.health()
     return jsonify({
         'status': 'healthy',
         'service': 'RAG System',
         'version': '1.0',
-        'llm_model': llm_manager.model_name
+        'llm_model': llm_manager.model_name,
+        'ollama': ollama_status,
+        'review_service': review_status        
     })
 
 
@@ -212,5 +315,5 @@ def internal_error(error):
 
 # ==================== RUN APP ====================
 if __name__ == "__main__":
-    print("🌐 Server starting on http://0.0.0.0:5001")
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    print(f"🌐 Server starting on http://{config.FLASK_HOST}:{config.FLASK_PORT}")
+    app.run(debug=config.FLASK_DEBUG, host=config.FLASK_HOST, port=config.FLASK_PORT)

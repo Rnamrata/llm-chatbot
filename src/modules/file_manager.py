@@ -279,6 +279,18 @@ class FileManager:
 
                 print(f"uploadCodeForReview: {warning}")
 
+            # Store the raw, unchunked code once so it can be reloaded verbatim later
+            self.vector_store.store_chunks([Document(
+                page_content=content,
+                metadata={
+                    'source': filename,
+                    'type': 'code_review_source',
+                    'session_id': session_id,
+                    'review_id': review_id,
+                    'language': language,
+                }
+            )])
+
             # Chunk and store the code itself, scoped to this session/review
             code_metadata = {
                 'source': filename,
