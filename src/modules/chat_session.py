@@ -65,7 +65,7 @@ class ChatSession:
         Args:
             session_id: Session to attach the review to (created if missing)
             review_id: The review_id to scope retrieval to (set by uploadCodeForReview)
-            summary: Opening summary text, e.g. from LLMManager.summarize_review
+            summary: Opening summary text, e.g. from review_summary.build_headline
 
         Returns:
             dict: {'success': True, 'session_id': ..., 'review_id': ...}
