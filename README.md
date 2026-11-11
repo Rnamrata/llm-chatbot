@@ -70,7 +70,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 **Data Flow:**
 1. **Upload:** Document → Extract → Chunk → Embed → Store
 2. **Chat:** Question → Retrieve Context → LLM → Answer with Sources
-3. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → chat session scoped to that review via `review_id`
+3. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → opening message built from the findings (exact counts, plus a note if a check had a problem) → chat session scoped to that review via `review_id`
 
 ---
 
@@ -186,7 +186,7 @@ Server will be available at: `http://localhost:5001`
 
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
-| `/review` | POST | `file: <code file>`, `session_id` (optional) | Review a code file, store the code + findings, and attach the review to a chat session (creates one if `session_id` is omitted) |
+| `/review` | POST | `file: <code file>`, `session_id` (optional) | Review a code file, store the code + findings, and attach the review to a chat session (creates one if `session_id` is omitted). Returns `summary` (the opening message), `findings`, `warnings`, `code` and `language`; `warning` is added only when the review service was unreachable |
 | `/review/{review_id}` | GET | - | Reload a previously stored review's code and findings |
 
 ### Chat Endpoints
@@ -230,6 +230,33 @@ Server will be available at: `http://localhost:5001`
 }
 ```
 
+**Review Response:**
+```json
+{
+  "success": true,
+  "session_id": "abc-123",
+  "review_id": "def-456",
+  "summary": "2 issues found: 1 high, 1 medium. Most serious: SQL injection vulnerability (line 9).\n\nNote: The AI reviewer reported a problem: Ollama is unreachable at http://localhost:11434.",
+  "findings": [
+    {
+      "file": "UserDao.java",
+      "line": 9,
+      "severity": "high",
+      "category": "security",
+      "message": "SQL injection vulnerability",
+      "source": "llm"
+    }
+  ],
+  "warnings": [
+    { "source": "llm", "message": "Ollama is unreachable at http://localhost:11434" }
+  ],
+  "code": "...",
+  "language": "java"
+}
+```
+
+The `summary` is built in code from the findings, so its counts always match the list. `warnings` are problems one part of the review had while the rest still completed. If the review service cannot be reached at all, `findings` is empty, `summary` says the code could not be reviewed, and a `warning` field explains why.
+
 ---
 
 ## 📁 Project Structure
@@ -245,6 +272,7 @@ llm-chatbot/
 │   ├── vector_store_and_embedding.py  # Vector operations
 │   ├── llm_manager.py          # LLM management
 │   ├── chat_session.py         # Session management
+│   ├── review_summary.py       # Builds the review's opening message
 │   └── review_client.py        # Code review service client
 │
 ├── src/config.py                # Central configuration (reads .env)
@@ -255,7 +283,8 @@ llm-chatbot/
 │   ├── conftest.py
 │   ├── test_api.py
 │   ├── test_document_processor.py
-│   └── test_review_client.py
+│   ├── test_review_client.py
+│   └── test_review_summary.py
 │
 ├── scripts/
 │   └── smoke_test.py            # Manual smoke test (needs real servers running)
