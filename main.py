@@ -6,6 +6,7 @@ import src.modules.vector_store_and_embedding as vector_store_module
 import src.modules.llm_manager as llm_manager_module
 import src.modules.chat_session as chat_session_module
 import src.modules.review_client as review_client_module
+from src.modules.review_summary import build_headline
 from src import config
 import uuid
 import requests 
@@ -116,7 +117,8 @@ def review_code():
     if not result.get('success'):
         return jsonify(result), 400
 
-    summary = llm_manager.summarize_review(result['findings'])
+    warnings = result.get('warnings', [])
+    summary = build_headline(result['findings'], warnings, review_failed=bool(result.get('warning')))
     chat_manager.attach_review(session_id, result['review_id'], summary)
 
     response = {
@@ -125,6 +127,7 @@ def review_code():
         'review_id': result['review_id'],
         'summary': summary,
         'findings': result['findings'],
+        'warnings': warnings,
         'code': result['code'],
         'language': result['language']
     }

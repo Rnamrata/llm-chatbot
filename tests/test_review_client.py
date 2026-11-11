@@ -38,3 +38,47 @@ def test_review_node_down(review_client):
 
     assert result['success'] is False
     assert 'unreachable' in result['error']
+
+def _review_with(review_client, data):
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = data
+
+    with patch('src.modules.review_client.requests.request', return_value=fake_response):
+        return review_client.review('a.py', 'python', 'print(1)')
+
+
+def test_review_passes_the_service_warnings_through(review_client):
+    result = _review_with(review_client, {
+        'findings': [],
+        'warnings': [{'source': 'llm', 'message': 'Ollama is unreachable'}]
+    })
+
+    assert result['warnings'] == [{'source': 'llm', 'message': 'Ollama is unreachable'}]
+
+
+def test_review_without_warnings_gives_an_empty_list(review_client):
+    assert _review_with(review_client, {'findings': []})['warnings'] == []
+
+
+def test_review_ignores_warnings_that_are_not_a_list(review_client):
+    assert _review_with(review_client, {'findings': [], 'warnings': 'oops'})['warnings'] == []
+    assert _review_with(review_client, {'findings': [], 'warnings': None})['warnings'] == []
+
+
+def test_review_drops_malformed_warnings_and_keeps_good_ones(review_client):
+    result = _review_with(review_client, {
+        'findings': [],
+        'warnings': ['text', None, {'source': 'llm'}, {'source': 'llm', 'message': ' '},
+                     {'source': 'ruff', 'message': 'ok'}]
+    })
+
+    assert result['warnings'] == [{'source': 'ruff', 'message': 'ok'}]
+
+
+def test_review_keeps_only_source_and_message_of_a_warning(review_client):
+    result = _review_with(review_client, {
+        'findings': [],
+        'warnings': [{'source': 'llm', 'message': 'm', 'secret': 'x'}]
+    })
+
+    assert result['warnings'] == [{'source': 'llm', 'message': 'm'}]

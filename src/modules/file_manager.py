@@ -243,6 +243,7 @@ class FileManager:
             'code': str,
             'filename': str,
             'language': str,
+            'warnings': [...] (problems the review service reported; may be empty)
             'warning': str (only present if the review service was unreachable)
         }
     """
@@ -269,8 +270,10 @@ class FileManager:
 
             warning = None
             findings = []
+            warnings = []
             if review_result['success']:
                 findings = review_result['findings']
+                warnings = review_result.get('warnings', [])
             else:
                 warning = (
                     f"Review service unavailable ({review_result['error']}); "
@@ -330,7 +333,8 @@ class FileManager:
                 'findings': findings,
                 'code': content,
                 'filename': filename,
-                'language': language
+                'language': language,
+                'warnings': warnings
             }
 
             if warning:

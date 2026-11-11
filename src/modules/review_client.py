@@ -52,6 +52,18 @@ class ReviewClient:
         except ValueError:
             return {'success': False, 'error': 'Review service returned invalid JSON'}
 
+    @staticmethod
+    def _clean_warnings(raw):
+        """Keep only well-formed warnings (a dict with a text message); ignore anything else"""
+        if not isinstance(raw, list):
+            return []
+
+        return [
+            {'source': w.get('source'), 'message': w['message']}
+            for w in raw
+            if isinstance(w, dict) and isinstance(w.get('message'), str) and w['message'].strip()
+        ]
+
     def review(self, filename, language, code):
         """
         Send code to the Node review service and get back findings
@@ -62,7 +74,10 @@ class ReviewClient:
             code: Source code to review
 
         Returns:
-            dict: {'success': True, 'findings': [...]} or {'success': False, 'error': str}
+            dict: {'success': True, 'findings': [...], 'warnings': [...]} or
+                  {'success': False, 'error': str}. Warnings are problems one part of the
+                  review had (for example the AI reviewer was unreachable) while the
+                  rest still completed.
         """
 
         result = self._request(
@@ -73,8 +88,12 @@ class ReviewClient:
         if not result['success']:
             return result
 
-        return {'success': True, 'findings': result['data'].get('findings', [])}
-
+        data = result['data']
+        return {
+            'success': True,
+            'findings': data.get('findings', []),
+            'warnings': self._clean_warnings(data.get('warnings'))
+        }
     def health(self):
         """
         Ping the Node review service's health endpoint

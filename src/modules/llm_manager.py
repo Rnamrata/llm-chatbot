@@ -107,38 +107,6 @@ class LLMManager:
         
         return chain, memory
 
-    def summarize_review(self, findings):
-        """
-        Turn a list of review findings into a short opening chat reply
-
-        Args:
-            findings: List of finding dicts with file/line/severity/message
-
-        Returns:
-            str: A short summary, e.g. "3 issues found, 1 high severity..."
-        """
-        if not findings:
-            return "No issues found - the code looks clean!"
-        
-        findings_text = "\n".join(
-            f"-[{f.get('severity', 'info').upper()}] {f.get('file', '?')}:{f.get('line', '?')} - {f.get('message', '')}"
-            for f in findings
-        )
-        prompt = f"""Summarize the following code review findings in 1-2 short sentences,
-as an opening chat reply to the developer (e.g. "3 issues found, 1 high severity...").
-Do not list every finding individually — just give the headline.
-
-Findings:
-{findings_text}
-
-Summary:"""
-
-        try:
-            return self.review_llm.invoke(prompt).strip()
-        except Exception as e:
-            print(f"Error summarizing review findings: {e}")
-            return f"Found {len(findings)} issue(s), but couldn't generate summary" 
-    
     def simple_query(self, prompt):
         """
         Simple query without retrieval (direct LLM call)
