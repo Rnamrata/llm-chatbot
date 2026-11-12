@@ -2,7 +2,8 @@
 
 A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that allows you to chat with your documents using local LLMs. Upload files, YouTube videos, or web pages, and have intelligent conversations with the content.
 
-![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
+![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
+[![CI](https://github.com/Rnamrata/llm-chatbot/actions/workflows/ci.yml/badge.svg)](https://github.com/Rnamrata/llm-chatbot/actions/workflows/ci.yml)
 ![Flask](https://img.shields.io/badge/Flask-3.0+-green.svg)
 ![LangChain](https://img.shields.io/badge/LangChain-latest-orange.svg)
 
@@ -93,7 +94,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.11+ (CI runs 3.12)
 - Ollama
 - FFmpeg (for YouTube support)
 
@@ -143,7 +144,7 @@ cp .env.example .env
 | `RETRIEVAL_K` | `5` | Default number of chunks retrieved per query |
 | `UPLOAD_DIR` / `MEDIA_DIR` | `./uploads` / `./uploads/media` | Where uploaded files/audio are saved |
 | `MAX_UPLOAD_MB` | `20` | Max upload size |
-| `WHISPER_MODEL` | `base` | Whisper model for YouTube transcription |
+| `WHISPER_MODEL` | `base` | Whisper model for YouTube transcription; loaded on first use (the first transcription downloads it) |
 | `REVIEW_SERVICE_URL` / `REVIEW_TIMEOUT_SECONDS` | `http://localhost:4000` / `60` | Where the code review service is running |
 
 ---
@@ -279,10 +280,14 @@ llm-chatbot/
 ├── .env.example                 # Environment variable template
 ├── pytest.ini                   # pytest configuration
 │
+├── .github/workflows/
+│   └── ci.yml                   # Runs the tests on every pull request
+│
 ├── tests/                       # Automated tests (pytest, fully mocked)
 │   ├── conftest.py
 │   ├── test_api.py
 │   ├── test_document_processor.py
+│   ├── test_file_manager.py
 │   ├── test_review_client.py
 │   └── test_review_summary.py
 │
@@ -352,10 +357,14 @@ curl http://localhost:5001/stats
 
 ## 🧪 Testing
 
-### Unit/Integration Tests (mocked — no servers needed)
+### Unit/Integration Tests (mocked — no servers, no Ollama, no Whisper model needed)
 ```bash
 pytest
 ```
+
+The same tests run on every pull request and push to `master` through GitHub Actions
+(`.github/workflows/ci.yml`, Python 3.12). CI does not install Whisper or PyTorch, because
+the speech model is loaded the first time a YouTube upload needs it and no test transcribes audio.
 
 ### Manual Smoke Test (needs Ollama + this server running)
 ```bash
