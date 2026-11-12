@@ -3,7 +3,6 @@ import yt_dlp
 import os
 import uuid
 from langchain_core.documents import Document
-import whisper
 from langchain_community.document_loaders import WebBaseLoader
 from werkzeug.utils import secure_filename
 
@@ -23,7 +22,22 @@ class FileManager:
         os.makedirs("uploads", exist_ok=True)
         os.makedirs("uploads/media", exist_ok=True)
 
-        self.whisper_model = whisper.load_model("base")
+        self._whisper_model = None
+
+    @property
+    def whisper_model(self):
+        """
+        The speech-to-text model, loaded the first time it is needed
+
+        Only YouTube uploads transcribe audio. Loading the model when the app starts would
+        cost a ~140 MB download and several seconds for every start, and would require
+        whisper (and its PyTorch install) even where nothing ever transcribes, such as the tests.
+        """
+        if self._whisper_model is None:
+            import whisper
+            self._whisper_model = whisper.load_model(config.WHISPER_MODEL)
+
+        return self._whisper_model
 
     def uploadFile(self, file):
         """
