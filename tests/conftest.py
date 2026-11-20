@@ -74,6 +74,7 @@ class FakeChroma:
     def __init__(self, collection_name=None, embedding_function=None, persist_directory=None):
         self._docs = []  # list of (id, page_content, metadata)
         self._collection = _FakeCollection(self._docs)
+        self._next_id = 0  # ids stay unique after deletes
 
     def _matches(self, metadata, where):
         if not where:
@@ -83,7 +84,8 @@ class FakeChroma:
     def add_documents(self, documents):
         ids = []
         for doc in documents:
-            doc_id = str(len(self._docs))
+            self._next_id += 1
+            doc_id = str(self._next_id)
             self._docs.append((doc_id, doc.page_content, doc.metadata))
             ids.append(doc_id)
         return ids
@@ -101,6 +103,10 @@ class FakeChroma:
         return _FakeRetriever(store=self, k=search_kwargs.get('k', 4), filter=search_kwargs.get('filter'))
 
     def delete(self, ids=None, where=None):
+        if ids is not None:
+            remove = set(ids)
+            self._docs[:] = [d for d in self._docs if d[0] not in remove]
+            return
         self._docs[:] = [d for d in self._docs if not self._matches(d[2], where)]
 
     def get(self, ids=None, where=None, include=None):

@@ -5,6 +5,7 @@ import uuid
 from langchain_core.documents import Document
 from langchain_community.document_loaders import WebBaseLoader
 from werkzeug.utils import secure_filename
+from src.modules.source_library import now_iso
 
 class FileManager:
     def __init__(self, document_processor, vector_store, review_client):
@@ -67,7 +68,7 @@ class FileManager:
             # Chunk the content
             chunks = self.document_processor.chunkDocument(
                 content=content,
-                metadata={'source': filename, 'type': 'file_upload'}
+                metadata={'source': filename, 'type': 'file_upload', 'added_at': now_iso()}
             )
             
             if not chunks:
@@ -155,7 +156,7 @@ class FileManager:
             # Chunk the transcription
             chunks = self.document_processor.chunkDocument(
                 content=doc.page_content,
-                metadata={'source': url, 'type': 'youtube', 'filename': transcription_filename}
+                metadata={'source': url, 'type': 'youtube', 'filename': transcription_filename, 'added_at': now_iso()}
             )
             
             if not chunks:
@@ -218,7 +219,7 @@ class FileManager:
             # Chunk the content
             chunks = self.document_processor.chunkDocument(
                 content=doc.page_content,
-                metadata={'source': url, 'type': 'web', 'title': title, 'filename': safe_filename}
+                metadata={'source': url, 'type': 'web', 'title': title, 'filename': safe_filename, 'added_at': now_iso()}
             )
             
             if not chunks:
