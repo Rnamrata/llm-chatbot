@@ -7,6 +7,8 @@ import src.modules.llm_manager as llm_manager_module
 import src.modules.chat_session as chat_session_module
 import src.modules.review_client as review_client_module
 from src.modules.review_summary import build_headline
+from src.modules.source_library import SourceLibrary, source_id
+from werkzeug.utils import secure_filename
 from src import config
 import uuid
 import requests 
@@ -21,6 +23,7 @@ review_client = review_client_module.ReviewClient()
 file_manager = file_manager_module.FileManager(document_processor, vector_store, review_client)
 llm_manager = llm_manager_module.LLMManager(model_name=None, temperature=None)
 chat_manager = chat_session_module.ChatSession(llm_manager, vector_store)
+sources = SourceLibrary(vector_store)
 
 # ==================== UPLOAD ENDPOINTS ====================
 
@@ -36,10 +39,9 @@ def upload_file():
     file = request.files.get('file')
     if not file:
        return jsonify({'error': 'No file provided', 'success': False}), 400
-    result = file_manager.uploadFile(file)
 
-    status_code = 200 if result.get('success') else 400
-    return jsonify(result), status_code
+    name = secure_filename(file.filename)
+    return _track_upload(name, name, 'file_upload', lambda: file_manager.uploadFile(file))
 
 
 @app.route('/upload/youtube', methods=['POST'])
@@ -52,10 +54,9 @@ def upload_youtube():
         - url: YouTube video URL
     """
     url = request.form.get('url') or (request.get_json(silent=True) or {}).get('url')
-    result = file_manager.uploadMediaFile(url)
-    
-    status_code = 200 if result.get('success') else 400
-    return jsonify(result), status_code
+    if not url:
+        return jsonify({'error': 'No URL provided', 'success': False}), 400
+    return _track_upload(url, url, 'youtube', lambda: file_manager.uploadMediaFile(url))
 
 
 @app.route('/upload/web', methods=['POST'])
@@ -68,10 +69,27 @@ def upload_web():
         - url: Web page URL
     """
     url = request.form.get('url') or (request.get_json(silent=True) or {}).get('url')
-    result = file_manager.webFileUpload(url)
+    if not url:
+        return jsonify({'error': 'No URL provided', 'success': False}), 400
+    return _track_upload(url, url, 'web', lambda: file_manager.webFileUpload(url))
 
-    status_code = 200 if result.get('success') else 400
-    return jsonify(result), status_code
+
+def _track_upload(source, name, doc_type, upload):
+    """
+    Runs an upload while GET /sources shows it as 'processing', and adds the
+    stored source (id, name, chunk count) to a successful response
+    """
+    sources.start(source, name, doc_type)
+    try:
+        result = upload()
+    finally:
+        sources.finish(source)
+
+    if not result.get('success'):
+        return jsonify(result), 400
+
+    result['source'] = sources.get(source_id(source))
+    return jsonify(result), 200
 
 @app.route('/upload/code', methods=['POST'])
 def upload_code():
@@ -181,6 +199,36 @@ def get_review(review_id):
         })
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
+
+# ==================== SOURCE ENDPOINTS ====================
+
+@app.route('/sources', methods=['GET'])
+def list_sources():
+    """
+    List the files, YouTube videos and web pages added as sources, newest first
+
+    Each item: id, name, type (file_upload | youtube | web | unknown), source
+    (file name or URL), chunks, status (ready | processing | outdated), added_at.
+    Chunks stored without a type by older versions are one 'outdated' item
+    with id 'legacy'.
+    """
+    try:
+        return jsonify(sources.list())
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/sources/<sid>', methods=['DELETE'])
+def delete_source(sid):
+    """Remove one source's chunks from the vector store (the uploaded file stays on disk)"""
+    try:
+        removed = sources.delete(sid)
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
+
+    if not removed:
+        return jsonify({'error': 'Source not found', 'success': False}), 404
+    return jsonify({'success': True, 'id': sid, 'chunks_removed': removed})
 
 # ==================== CHAT ENDPOINTS ====================
 
