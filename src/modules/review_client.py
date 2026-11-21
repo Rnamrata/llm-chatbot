@@ -44,13 +44,39 @@ class ReviewClient:
         if response.status_code != 200:
             return {
                 'success': False,
-                'error': f'Review service returned {response.status_code}: {response.text[:200]}'
+                'error': self._error_message(response),
+                # Callers use these to tell "the service refused this file" (400, 413)
+                # or "too many reviews" (429) apart from "the service is down"
+                'status': response.status_code,
+                'retry_after': self._retry_after(response),
             }
 
         try:
             return {'success': True, 'data': response.json()}
         except ValueError:
             return {'success': False, 'error': 'Review service returned invalid JSON'}
+
+    @staticmethod
+    def _error_message(response):
+        """The service's own message ({success, error, message}) or, failing that, the raw text"""
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict):
+            message = body.get('message') or body.get('error')
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        return f'Review service returned {response.status_code}: {response.text[:200]}'
+
+    @staticmethod
+    def _retry_after(response):
+        """Seconds from a Retry-After header, or None"""
+        value = response.headers.get('Retry-After') if response.headers else None
+        try:
+            return max(0, int(value)) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _clean_warnings(raw):
