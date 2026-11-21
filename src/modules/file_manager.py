@@ -1,11 +1,29 @@
 from src import config
 import yt_dlp
 import os
+import json
 import uuid
 from langchain_core.documents import Document
 from langchain_community.document_loaders import WebBaseLoader
 from werkzeug.utils import secure_filename
 from src.modules.source_library import now_iso
+
+# Review service answers that mean "this file was not reviewed": bad input, too large, rate limited
+REFUSED_STATUSES = (400, 413, 429)
+
+
+def finding_text(finding, filename):
+    """
+    What the model reads for one finding. The line, severity and suggestion are
+    spelled out because the model never sees chunk metadata.
+    """
+    line = finding.get('line')
+    where = f"{filename}, line {line}" if line else filename
+    text = f"{where} ({finding.get('severity', 'info')}): {finding.get('message', '')}"
+    if finding.get('suggestion'):
+        text += f" Suggestion: {finding['suggestion']}"
+    return text
+
 
 class FileManager:
     def __init__(self, document_processor, vector_store, review_client):
@@ -283,6 +301,16 @@ class FileManager:
             # going so the code still gets stored and is chattable
             review_result = self.review_client.review(filename, language, content)
 
+            # The service refused the file or the request (unsupported, too large,
+            # too many reviews): nothing was reviewed, so store nothing either
+            if not review_result['success'] and review_result.get('status') in REFUSED_STATUSES:
+                return {
+                    'success': False,
+                    'error': review_result['error'],
+                    'status': review_result['status'],
+                    'retry_after': review_result.get('retry_after'),
+                }
+
             warning = None
             findings = []
             warnings = []
@@ -306,6 +334,8 @@ class FileManager:
                     'session_id': session_id,
                     'review_id': review_id,
                     'language': language,
+                    'warnings_json': json.dumps(warnings),
+                    'review_warning': warning or ''
                 }
             )])
 
@@ -319,6 +349,11 @@ class FileManager:
             }
             code_chunks = self.document_processor.chunkCode(content, language, code_metadata)
 
+            for chunk in code_chunks:
+                start, end = chunk.metadata.get('start_line'), chunk.metadata.get('end_line')
+                if start:
+                    chunk.page_content = f"{filename}, lines {start}-{end}:\n{chunk.page_content}"
+            
             if code_chunks:
                 self.vector_store.store_chunks(code_chunks)
 
@@ -326,7 +361,7 @@ class FileManager:
             finding_docs = []
             for finding in findings:
                 finding_docs.append(Document(
-                    page_content=finding.get('message', ''),
+                    page_content=finding_text(finding, filename),
                     metadata={
                         'source': filename,
                         'type': 'review_finding',
@@ -335,7 +370,9 @@ class FileManager:
                         'file': finding.get('file', filename),
                         'line': finding.get('line') or 0,
                         'severity': finding.get('severity', 'info'),
-                        'message': finding.get('message', '')
+                        'message': finding.get('message', ''),'category': finding.get('category') or '',
+                        'finding_source': finding.get('source') or '',
+                        'suggestion': finding.get('suggestion') or ''
                     }
                 ))
 

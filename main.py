@@ -6,11 +6,12 @@ import src.modules.vector_store_and_embedding as vector_store_module
 import src.modules.llm_manager as llm_manager_module
 import src.modules.chat_session as chat_session_module
 import src.modules.review_client as review_client_module
-from src.modules.review_summary import build_headline
+from src.modules.review_summary import build_headline, SEVERITY_ORDER
 from src.modules.source_library import SourceLibrary, source_id
 from werkzeug.utils import secure_filename
 from src import config
 import uuid
+import json
 import requests 
 
 app = Flask(__name__)
@@ -133,7 +134,13 @@ def review_code():
 
     result = file_manager.uploadCodeForReview(file, session_id)
     if not result.get('success'):
-        return jsonify(result), 400
+        # 400 unsupported or bad input, 413 too large, 429 too many reviews: pass the
+        # review service's answer on so the UI can say which (and when to retry)
+        status = result.get('status') if result.get('status') in (400, 413, 429) else 400
+        response = jsonify(result)
+        if result.get('retry_after') is not None:
+            response.headers['Retry-After'] = str(result['retry_after'])
+        return response, status
 
     warnings = result.get('warnings', [])
     summary = build_headline(result['findings'], warnings, review_failed=bool(result.get('warning')))
@@ -143,6 +150,7 @@ def review_code():
         'success': True,
         'session_id': session_id,
         'review_id': result['review_id'],
+        'filename': result['filename'],
         'summary': summary,
         'findings': result['findings'],
         'warnings': warnings,
@@ -158,47 +166,75 @@ def review_code():
 @app.route('/review/<review_id>', methods=['GET'])
 def get_review(review_id):
     """
-    Get a previously stored review's code and findings by review_id
-    So Angular can reload a review after a page refresh
+    Get a previously stored review by review_id, so Angular can reload it after a
+    page refresh: the same fields POST /review returned (code, findings with category,
+    source and suggestion, warnings, summary, session_id)
     """
     try:
-        result = vector_store.vectorstore.get(
-            where={'review_id': review_id},
-            include=['documents', 'metadatas']
-        )
-
-        if not result['ids']:
-            return jsonify({'error': 'Review not found', 'success': False}), 404
-
-        findings = []
-        code = None
-        filename = None
-        language = None
-
-        for doc_text, metadata in zip(result['documents'], result['metadatas']):
-            doc_type = metadata.get('type')
-            if doc_type == 'code_review_source':
-                code = doc_text
-                filename = metadata.get('source')
-                language = metadata.get('language')
-            elif doc_type == 'review_finding':
-                findings.append({
-                    'file': metadata.get('file'),
-                    'line': metadata.get('line'),
-                    'severity': metadata.get('severity'),
-                    'message': metadata.get('message')
-                })
-
-        return jsonify({
-            'success': True,
-            'review_id': review_id,
-            'filename': filename,
-            'language': language,
-            'code': code,
-            'findings': findings
-        })
+        review = _load_review(review_id)
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
+
+    if review is None:
+        return jsonify({'error': 'Review not found', 'success': False}), 404
+    return jsonify(review)
+
+
+def _load_review(review_id):
+    """Rebuilds a stored review from its chunks; None if there is no such review"""
+    result = vector_store.vectorstore.get(
+        where={'review_id': review_id},
+        include=['documents', 'metadatas']
+    )
+    if not result['ids']:
+        return None
+
+    review = {
+        'success': True,
+        'review_id': review_id,
+        'session_id': None,
+        'filename': None,
+        'language': None,
+        'code': None,
+        'findings': [],
+        'warnings': [],
+    }
+    warning = ''
+
+    for doc_text, metadata in zip(result['documents'], result['metadatas']):
+        metadata = metadata or {}
+        doc_type = metadata.get('type')
+        if doc_type == 'code_review_source':
+            review['code'] = doc_text
+            review['filename'] = metadata.get('source')
+            review['language'] = metadata.get('language')
+            review['session_id'] = metadata.get('session_id')
+            warning = metadata.get('review_warning') or ''
+            try:
+                review['warnings'] = json.loads(metadata.get('warnings_json') or '[]')
+            except ValueError:
+                review['warnings'] = []
+        elif doc_type == 'review_finding':
+            finding = {
+                'file': metadata.get('file'),
+                'line': metadata.get('line'),
+                'severity': metadata.get('severity'),
+                'message': metadata.get('message'),
+            }
+            # Optional fields: stored as '' when the service sent none
+            for key, stored in (('category', 'category'), ('source', 'finding_source'), ('suggestion', 'suggestion')):
+                if metadata.get(stored):
+                    finding[key] = metadata[stored]
+            review['findings'].append(finding)
+
+    # Same order as the review service: most serious first, then by line
+    rank = {severity: i for i, severity in enumerate(SEVERITY_ORDER)}
+    review['findings'].sort(key=lambda f: (rank.get(f['severity'], len(rank)), f['line'] or 0))
+
+    review['summary'] = build_headline(review['findings'], review['warnings'], review_failed=bool(warning))
+    if warning:
+        review['warning'] = warning
+    return review
 
 # ==================== SOURCE ENDPOINTS ====================
 
@@ -241,6 +277,8 @@ def chat():
         - question: User's question (required)
         - session_id: Session ID for conversation continuity (optional)
         - k: Number of relevant chunks to retrieve (optional, default: 5)
+        - review_id: The review this chat is about (optional); restores review
+                mode if the session was lost, e.g. after a restart
     """
     try:
         data = request.get_json()
@@ -251,6 +289,12 @@ def chat():
         question = data['question']
         session_id = data.get('session_id', str(uuid.uuid4()))
         k = data.get('k', 5)
+
+        review_id = data.get('review_id')
+        if review_id and not chat_manager.get_session_info(session_id).get('exists'):
+            review = _load_review(review_id)
+            if review is not None:
+                chat_manager.attach_review(session_id, review_id, review['summary'])
         
         result = chat_manager.query(question, session_id, k=k)
         return jsonify(result)
