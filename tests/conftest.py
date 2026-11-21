@@ -133,6 +133,7 @@ def app(monkeypatch, tmp_path, fake_review_client):
     monkeypatch.setenv('CHROMA_PERSIST_DIR', str(tmp_path / 'chroma_db'))
     monkeypatch.setenv('UPLOAD_DIR', str(tmp_path / 'uploads'))
     monkeypatch.setenv('MEDIA_DIR', str(tmp_path / 'uploads' / 'media'))
+    monkeypatch.setenv('SESSIONS_FILE', str(tmp_path / 'data' / 'sessions.json'))
 
     _purge_app_modules()
 

@@ -41,6 +41,10 @@ MEDIA_DIR = _path("MEDIA_DIR", "./uploads/media")
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", 20)) * 1024 * 1024
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 
+# ===== Chat sessions =====
+# Saved here so History and open chats survive a restart
+SESSIONS_FILE = _path("SESSIONS_FILE", "./data/sessions.json")
+
 # ===== Code review service (Node.js) =====
 REVIEW_SERVICE_URL = os.getenv("REVIEW_SERVICE_URL", "http://localhost:4000").rstrip("/")
 REVIEW_TIMEOUT_SECONDS = int(os.getenv("REVIEW_TIMEOUT_SECONDS", 60))
@@ -77,5 +81,5 @@ CODE_LANGUAGES = {
 CODE_EXTENSIONS = set(CODE_LANGUAGES)
 
 # Make sure folders exist at startup
-for _d in (UPLOAD_DIR, MEDIA_DIR, CHROMA_PERSIST_DIR):
+for _d in (UPLOAD_DIR, MEDIA_DIR, CHROMA_PERSIST_DIR, SESSIONS_FILE.parent):
     _d.mkdir(parents=True, exist_ok=True)

@@ -185,3 +185,6 @@ __pycache__/
 #claude
 *.claude
 .claude/
+
+# Saved chat sessions
+data/
