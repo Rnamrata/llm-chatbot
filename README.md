@@ -33,7 +33,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 - 🧠 **Intelligent Conversation** - Context-aware with conversation history
 - 🔍 **Semantic Search** - Vector-based retrieval with source attribution
 - 🚀 **Automatic Pipeline** - One-call upload to storage
-- 💾 **Session Management** - Multiple concurrent conversations
+- 💾 **Saved Sessions** - Chats and code reviews are saved to disk with a title, type and pin, so they survive a restart
 
 ### Technical Features
 - 🏗️ **Modular Architecture** - Clean separation of concerns
@@ -143,6 +143,7 @@ cp .env.example .env
 | `CHROMA_PERSIST_DIR` / `CHROMA_COLLECTION` | `./chroma_db` / `my_documents` | Vector store location/collection |
 | `RETRIEVAL_K` | `5` | Default number of chunks retrieved per query |
 | `UPLOAD_DIR` / `MEDIA_DIR` | `./uploads` / `./uploads/media` | Where uploaded files/audio are saved |
+| `SESSIONS_FILE` | `./data/sessions.json` | Where chat sessions are saved |
 | `MAX_UPLOAD_MB` | `20` | Max upload size |
 | `WHISPER_MODEL` | `base` | Whisper model for YouTube transcription; loaded on first use (the first transcription downloads it) |
 | `REVIEW_SERVICE_URL` / `REVIEW_TIMEOUT_SECONDS` | `http://localhost:4000` / `60` | Where the code review service is running |
@@ -187,20 +188,30 @@ Server will be available at: `http://localhost:5001`
 
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
-| `/review` | POST | `file: <code file>`, `session_id` (optional) | Review a code file, store the code + findings, and attach the review to a chat session (creates one if `session_id` is omitted). Returns `summary` (the opening message), `findings`, `warnings`, `code` and `language`; `warning` is added only when the review service was unreachable |
-| `/review/{review_id}` | GET | - | Reload a previously stored review's code and findings |
+| `/review` | POST | `file: <code file>`, `session_id` (optional) | Review a code file, store the code + findings, and attach the review to a chat session (creates one if `session_id` is omitted). Returns `summary` (the opening message), `filename`, `findings`, `warnings`, `code` and `language`; `warning` is added only when the review service was unreachable. When the review service refuses the file, its status is passed on and nothing is stored: 400 (unsupported or bad input), 413 (too large) or 429 (too many reviews, with `Retry-After` and `retry_after` in the body) |
+| `/review/{review_id}` | GET | - | Reload a stored review: the same fields `POST /review` returned, findings most serious first. 404 if it was deleted |
+
+### Source Endpoints
+
+| Endpoint | Method | Body | Description |
+|----------|--------|------|-------------|
+| `/sources` | GET | - | List added files, YouTube videos and web pages, newest first: `id`, `name`, `type`, `source`, `chunks`, `status` (`ready`, `processing` or `outdated`) and `added_at`. Chunks stored by older versions without a type show as one `outdated` item with id `legacy` |
+| `/sources/{id}` | DELETE | - | Remove a source's chunks from the vector store (the uploaded file stays on disk) |
 
 ### Chat Endpoints
 
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
 | `/chat/new` | POST | - | Create new session |
-| `/chat` | POST | `{"question": "...", "session_id": "..."}` | Send message |
-| `/chat/history/{id}` | GET | - | Get conversation history |
+| `/chat` | POST | `{"question": "...", "session_id": "...", "review_id": "..."}` | Send message. `review_id` is optional: for a review's chat the server no longer knows, it restores review mode |
+| `/chat/history/{id}` | GET | - | Get conversation history, each answer with its sources |
 | `/chat/session/{id}` | GET | - | Get session info |
-| `/chat/clear/{id}` | DELETE | - | Clear session |
-| `/chat/sessions` | GET | - | List all sessions |
-| `/chat/cleanup` | POST | `{"inactive_hours": 24}` | Remove old sessions |
+| `/chat/session/{id}` | PATCH | `{"pinned": true}` or `{"title": "..."}` | Pin, unpin or rename a session |
+| `/chat/clear/{id}` | DELETE | - | Delete a session; for a review's session, the stored review goes too |
+| `/chat/sessions` | GET | - | List saved chats and reviews, most recently used first, with `type`, `title`, `preview`, `pinned` and counts |
+| `/chat/cleanup` | POST | `{"inactive_hours": 24, "keep_pinned": true}` | Delete sessions not used for a while, and their reviews; pinned ones are kept unless `keep_pinned` is `false` |
+
+Sessions are saved to `SESSIONS_FILE` (`data/sessions.json` by default) whenever they change, and loaded when the server starts. A session's conversation is rebuilt from its saved messages the first time it is used again.
 
 ### Utility Endpoints
 
@@ -237,6 +248,7 @@ Server will be available at: `http://localhost:5001`
   "success": true,
   "session_id": "abc-123",
   "review_id": "def-456",
+  "filename": "UserDao.java",
   "summary": "2 issues found: 1 high, 1 medium. Most serious: SQL injection vulnerability (line 9).\n\nNote: The AI reviewer reported a problem: Ollama is unreachable at http://localhost:11434.",
   "findings": [
     {
@@ -273,6 +285,8 @@ llm-chatbot/
 │   ├── vector_store_and_embedding.py  # Vector operations
 │   ├── llm_manager.py          # LLM management
 │   ├── chat_session.py         # Session management
+│   ├── session_store.py        # Saves sessions to data/sessions.json
+│   ├── source_library.py       # Lists and removes sources
 │   ├── review_summary.py       # Builds the review's opening message
 │   └── review_client.py        # Code review service client
 │
@@ -289,13 +303,18 @@ llm-chatbot/
 │   ├── test_document_processor.py
 │   ├── test_file_manager.py
 │   ├── test_review_client.py
-│   └── test_review_summary.py
+│   ├── test_review_details.py
+│   ├── test_review_summary.py
+│   ├── test_sessions.py
+│   └── test_sources.py
 │
 ├── scripts/
 │   └── smoke_test.py            # Manual smoke test (needs real servers running)
 │
 ├── uploads/                    # Uploaded files
 │   └── media/                  # YouTube audio
+│
+├── data/                       # Saved chat sessions (sessions.json)
 │
 └── chroma_db/                  # Vector database
 ```
@@ -386,7 +405,7 @@ Use Postman, cURL, or Python requests to test endpoints. See [Usage Examples](#-
 | "415 Unsupported Media Type" | Add header: `-H "Content-Type: application/json"` |
 | "FFmpeg not found" | Install FFmpeg: `brew install ffmpeg` (macOS) or `apt-get install ffmpeg` (Linux) |
 | Slow responses | Use smaller model (`phi3`), reduce chunk size, or decrease `k` parameter |
-| Out of memory | Clean up sessions: POST to `/chat/cleanup` |
+| Too many old chats | POST to `/chat/cleanup` to delete sessions not used for a day (pinned ones stay) |
 
 ---
 
@@ -411,7 +430,7 @@ Use Postman, cURL, or Python requests to test endpoints. See [Usage Examples](#-
 
 4. **Regular Cleanup**
 ```bash
-   # Clean up old sessions daily
+   # Delete sessions not used for a day (pinned ones stay)
    curl -X POST http://localhost:5001/chat/cleanup \
      -H "Content-Type: application/json" \
      -d '{"inactive_hours": 24}'
