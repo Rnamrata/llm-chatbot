@@ -34,7 +34,10 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 CHROMA_PERSIST_DIR = _path("CHROMA_PERSIST_DIR", "./chroma_db")
 CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "my_documents")
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 5))
-
+# Chunks embedded per request to Ollama. A whole book in one request means one dropped
+# connection loses the upload; smaller batches are retried on their own.
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", 64))
+EMBED_ATTEMPTS = int(os.getenv("EMBED_ATTEMPTS", 3))
 # ===== Uploads =====
 UPLOAD_DIR = _path("UPLOAD_DIR", "./uploads")
 MEDIA_DIR = _path("MEDIA_DIR", "./uploads/media")

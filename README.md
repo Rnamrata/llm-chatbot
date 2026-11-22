@@ -142,6 +142,7 @@ cp .env.example .env
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model |
 | `CHROMA_PERSIST_DIR` / `CHROMA_COLLECTION` | `./chroma_db` / `my_documents` | Vector store location/collection |
 | `RETRIEVAL_K` | `5` | Default number of chunks retrieved per query |
+| `EMBED_BATCH_SIZE` / `EMBED_ATTEMPTS` | `64` / `3` | Chunks embedded per Ollama request, and tries per batch before an upload fails |
 | `UPLOAD_DIR` / `MEDIA_DIR` | `./uploads` / `./uploads/media` | Where uploaded files/audio are saved |
 | `SESSIONS_FILE` | `./data/sessions.json` | Where chat sessions are saved |
 | `MAX_UPLOAD_MB` | `20` | Max upload size |
