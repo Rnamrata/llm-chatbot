@@ -78,3 +78,28 @@ def test_an_upload_survives_one_dropped_connection(client, store, monkeypatch):
     assert response.status_code == 200
     assert response.get_json()['success'] is True
     assert [s['name'] for s in client.get('/sources').get_json()['sources']] == ['notes.txt']
+
+def test_a_pdf_with_a_broken_maths_character_can_be_added(client, store, monkeypatch):
+    # What PyPDF2 returned for one page of a 413-page book: a maths letter cut in half
+    monkeypatch.setattr(
+        'src.modules.document_processor.DocumentProcessor.pdfToText',
+        lambda self, path, name: 'The loss is ∥x−dφμx+σx\ud835∥2 for each sample.\n' * 40,
+    )
+    # The real Ollama client sends text as UTF-8, which is where a half character failed
+    real_add = store.vectorstore.add_documents
+
+    def add(documents):
+        for doc in documents:
+            doc.page_content.encode('utf-8')
+        return real_add(documents)
+
+    monkeypatch.setattr(store.vectorstore, 'add_documents', add)
+
+    response = client.post(
+        '/upload/file',
+        data={'file': (io.BytesIO(b'%PDF-1.4 stand-in'), 'book.pdf')},
+        content_type='multipart/form-data',
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['success'] is True
