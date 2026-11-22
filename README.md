@@ -1,4 +1,4 @@
-# 🤖 RAG Chatbot System
+# 🤖 RAG Chatbot System (Lens)
 
 A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that allows you to chat with your documents using local LLMs. Upload files, YouTube videos, or web pages, and have intelligent conversations with the content.
 
