@@ -8,6 +8,7 @@ import src.modules.chat_session as chat_session_module
 import src.modules.review_client as review_client_module
 from src.modules.review_summary import build_headline, SEVERITY_ORDER
 from src.modules.source_library import SourceLibrary, source_id
+from src.modules.session_store import SessionStore
 from werkzeug.utils import secure_filename
 from src import config
 import uuid
@@ -23,7 +24,7 @@ vector_store = vector_store_module.VectorStoreAndEmbedding()
 review_client = review_client_module.ReviewClient()
 file_manager = file_manager_module.FileManager(document_processor, vector_store, review_client)
 llm_manager = llm_manager_module.LLMManager(model_name=None, temperature=None)
-chat_manager = chat_session_module.ChatSession(llm_manager, vector_store)
+chat_manager = chat_session_module.ChatSession(llm_manager, vector_store, SessionStore(config.SESSIONS_FILE))
 sources = SourceLibrary(vector_store)
 
 # ==================== UPLOAD ENDPOINTS ====================
@@ -144,7 +145,7 @@ def review_code():
 
     warnings = result.get('warnings', [])
     summary = build_headline(result['findings'], warnings, review_failed=bool(result.get('warning')))
-    chat_manager.attach_review(session_id, result['review_id'], summary)
+    chat_manager.attach_review(session_id, result['review_id'], summary, result['filename'], result['language'])
 
     response = {
         'success': True,
@@ -294,7 +295,7 @@ def chat():
         if review_id and not chat_manager.get_session_info(session_id).get('exists'):
             review = _load_review(review_id)
             if review is not None:
-                chat_manager.attach_review(session_id, review_id, review['summary'])
+                chat_manager.attach_review(session_id, review_id, review['summary'], review['filename'], review['language'])
         
         result = chat_manager.query(question, session_id, k=k)
         return jsonify(result)
@@ -313,12 +314,33 @@ def new_chat():
         'message': 'New chat session created'
     })
 
-
 @app.route('/chat/session/<session_id>', methods=['GET'])
 def get_session_info(session_id):
     """Get information about a specific session"""
     info = chat_manager.get_session_info(session_id)
     return jsonify(info)
+
+@app.route('/chat/session/<session_id>', methods=['PATCH'])
+def update_session(session_id):
+    """
+    Pin, unpin or rename a session
+
+    JSON body (both optional):
+        - pinned: true or false
+        - title: New title
+    """
+    data = request.get_json(silent=True) or {}
+    pinned = data.get('pinned')
+    title = data.get('title')
+    if pinned is not None and not isinstance(pinned, bool):
+        return jsonify({'error': 'pinned must be true or false', 'success': False}), 400
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        return jsonify({'error': 'title must be a non-empty string', 'success': False}), 400
+
+    session = chat_manager.update_session(session_id, pinned=pinned, title=title)
+    if session is None:
+        return jsonify({'error': 'Session not found', 'success': False}), 404
+    return jsonify({'success': True, 'session': session})
 
 
 @app.route('/chat/history/<session_id>', methods=['GET'])
@@ -337,17 +359,27 @@ def clear_chat_history(session_id):
 
 @app.route('/chat/sessions', methods=['GET'])
 def list_sessions():
-    """List all active chat sessions"""
+    """
+    List the chats and code reviews that have a conversation, most recently used
+    first, with what History shows: type, title, preview, pinned and counts
+    """
     result = chat_manager.list_sessions()
     return jsonify(result)
 
 
 @app.route('/chat/cleanup', methods=['POST'])
 def cleanup_sessions():
-    """Clean up inactive sessions"""
-    data = request.get_json() or {}
+    """
+    Delete sessions not used for a while (and their reviews)
+
+    JSON body (optional):
+        - inactive_hours: How long unused, default 24
+        - keep_pinned: Leave pinned sessions alone, default true
+    """
+    data = request.get_json(silent=True) or {}
     inactive_hours = data.get('inactive_hours', 24)
-    result = chat_manager.cleanup_inactive_sessions(inactive_hours)
+    keep_pinned = data.get('keep_pinned', True) is not False
+    result = chat_manager.cleanup_inactive_sessions(inactive_hours, keep_pinned=keep_pinned)
     return jsonify(result)
 
 
