@@ -4,6 +4,18 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter, Language, M
 from langchain_core.documents import Document
 from PyPDF2 import PdfReader
 
+
+
+def clean_text(text):
+    """
+    Makes extracted text safe to embed and store. PDF readers sometimes split a
+    character outside the basic range (maths letters like 𝜀, emoji) into two halves,
+    or keep only one half. A pair is joined back into the real character; a lone half
+    can't be encoded as UTF-8 (so Ollama and Chroma reject the whole file) and is dropped.
+    """
+    if not any('\ud800' <= c <= '\udfff' for c in text):
+        return text
+    return text.encode('utf-16', 'surrogatepass').decode('utf-16', 'replace').replace('\ufffd', '')
 class DocumentProcessor:
 
     def __init__(self):
@@ -100,7 +112,8 @@ class DocumentProcessor:
         if not content:
             print("No content to chunk")
             return []
-
+        
+        content = clean_text(content)
         source = metadata.get("source", "")
 
         if source.endswith(".md"):

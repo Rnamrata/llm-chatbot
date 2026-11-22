@@ -1,6 +1,5 @@
 import pytest
-from src.modules.document_processor import DocumentProcessor
-
+from src.modules.document_processor import DocumentProcessor, clean_text
 
 @pytest.fixture
 def processor():
@@ -45,3 +44,19 @@ def test_code_chunks_have_correct_line_ranges(processor):
     for prev, curr in zip(chunks, chunks[1:]):
         assert curr.metadata['start_line'] >= prev.metadata['start_line']
         assert curr.metadata['end_line'] >= curr.metadata['start_line']
+
+# ---------- characters PDF readers break ----------
+
+def test_clean_text_joins_split_characters_and_drops_lone_halves():
+    assert clean_text('noise \ud835\udf00 term') == 'noise 𝜀 term'  # both halves: the real 𝜀
+    assert clean_text('x+σ\ud835∥2') == 'x+σ∥2'  # one half, as PyPDF2 gave for page 290 of a book
+    assert clean_text('plain ε text') == 'plain ε text'
+
+
+def test_chunks_can_always_be_encoded(processor):
+    text = 'Reconstruction loss = ∥x−dφμx+σx\ud835∥2\n' * 50
+
+    chunks = processor.chunkDocument(text, {'source': 'book.pdf', 'type': 'file_upload'})
+
+    for chunk in chunks:
+        chunk.page_content.encode('utf-8')  # raised "surrogates not allowed" before
