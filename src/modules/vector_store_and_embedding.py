@@ -1,7 +1,11 @@
+import time
 from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from src import config
+
+# Seconds to wait before retrying a batch; doubles with each retry
+RETRY_DELAY_SECONDS = 1.0
 
 class VectorStoreAndEmbedding:
     def __init__(self):
@@ -39,14 +43,45 @@ class VectorStoreAndEmbedding:
             else:
                 print(f"Warning: Skipping invalid chunk type: {type(chunk)}")
         
-        # Add to vector store
-        self.vectorstore.add_documents(documents)
+        # Embed and store in batches, retrying a batch that fails. All or nothing: if a
+        # batch keeps failing, the batches already stored are removed again, so a file
+        # is never left half searchable.
+        stored_ids = []
+        try:
+            for start in range(0, len(documents), config.EMBED_BATCH_SIZE):
+                batch = documents[start:start + config.EMBED_BATCH_SIZE]
+                stored_ids.extend(self._add_with_retry(batch) or [])
+        except Exception:
+            if stored_ids:
+                try:
+                    self.vectorstore.delete(ids=stored_ids)
+                except Exception as cleanup_error:
+                    print(f"⚠️  Could not remove {len(stored_ids)} chunks of a failed upload: {cleanup_error}")
+            raise
+
         print(f"Stored {len(documents)} chunks in vector database")
         return {
             'data': 'Chunks embedded and stored successfully',
             'count': len(documents)
         }
-    
+
+    def _add_with_retry(self, batch):
+        """
+        Embeds and stores one batch. Ollama sometimes drops a connection mid-request
+        ("EOF"), so a failed batch is tried again before giving up.
+
+        Returns:
+            list: The ids Chroma gave the stored chunks
+        """
+        for attempt in range(1, config.EMBED_ATTEMPTS + 1):
+            try:
+                return self.vectorstore.add_documents(batch)
+            except Exception as e:
+                if attempt == config.EMBED_ATTEMPTS:
+                    raise
+                print(f"⚠️  Embedding {len(batch)} chunks failed ({e}); trying again ({attempt}/{config.EMBED_ATTEMPTS - 1})")
+                time.sleep(RETRY_DELAY_SECONDS * 2 ** (attempt - 1))
+
     def search(self, query, k=5, filter=None):
         """
         Search for similar chunks
