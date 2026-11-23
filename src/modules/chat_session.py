@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime, timedelta
 
+from src.modules.review_context import ReviewContextRetriever
+
 # Longest title made from a first question
 TITLE_LENGTH = 60
 
@@ -375,8 +377,10 @@ class ChatSession:
     # ---------- helpers ----------
 
     def _retriever(self, session, k):
-        search_filter = {'review_id': session['review_id']} if session['review_id'] else None
-        return self.vector_store.get_retriever(k=k, filter=search_filter)
+        if session['review_id']:
+            # Ask Lens reads the whole review: the numbered file and every finding
+            return ReviewContextRetriever(vector_store=self.vector_store, review_id=session['review_id'], k=k)
+        return self.vector_store.get_retriever(k=k)
 
     def _chain(self, session):
         """The session's chain, built from its saved messages the first time it is needed"""
