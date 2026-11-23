@@ -289,7 +289,7 @@ def chat():
         
         question = data['question']
         session_id = data.get('session_id', str(uuid.uuid4()))
-        k = data.get('k', 5)
+        k = data.get('k') or config.RETRIEVAL_K
 
         review_id = data.get('review_id')
         if review_id and not chat_manager.get_session_info(session_id).get('exists'):

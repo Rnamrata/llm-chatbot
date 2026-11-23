@@ -1,4 +1,5 @@
 import os
+import re
 from src import config
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language, MarkdownHeaderTextSplitter
 from langchain_core.documents import Document
@@ -16,6 +17,60 @@ def clean_text(text):
     if not any('\ud800' <= c <= '\udfff' for c in text):
         return text
     return text.encode('utf-16', 'surrogatepass').decode('utf-16', 'replace').replace('\ufffd', '')
+# Parts of a web page that are never the article: menus, banners, forms, scripts
+NOISE_TAGS = ['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'nav', 'aside', 'form', 'button', 'select', 'dialog']
+NOISE_ROLES = {'navigation', 'banner', 'contentinfo', 'search', 'dialog', 'complementary'}
+# Words in a class or id that mark site furniture ("site-nav", "cookie_banner").
+# Matched as whole words, so "article-body" or "navigator" stay.
+NOISE_WORDS = {
+    'nav', 'navbar', 'navigation', 'menu', 'breadcrumb', 'breadcrumbs', 'sidebar', 'footer',
+    'cookie', 'cookies', 'consent', 'subscribe', 'newsletter', 'share', 'sharing', 'social',
+    'related', 'recommended', 'promo', 'advert', 'ad', 'ads', 'modal', 'popup', 'banner', 'skip',
+    'cta', 'archive', 'archives', 'explore', 'contact',
+}
+
+
+def _is_noise(tag):
+    if tag.get('aria-hidden') == 'true' or (tag.get('role') or '').lower() in NOISE_ROLES:
+        return True
+    names = ' '.join(tag.get('class') or []) + ' ' + (tag.get('id') or '')
+    return bool(NOISE_WORDS & set(re.split(r'[^a-z0-9]+', names.lower())))
+
+
+def clean_web_page(soup):
+    """
+    The readable text of a web page, without its navigation, footers and banners
+    (which otherwise end up in every passage: "All articles · Become a member").
+
+    Args:
+        soup: The page as BeautifulSoup, e.g. from WebBaseLoader.scrape()
+
+    Returns:
+        tuple: (title, text)
+    """
+    title = soup.title.get_text(' ', strip=True) if soup.title else ''
+
+    for tag in soup.find_all(NOISE_TAGS):
+        tag.decompose()
+    # A page's own header and footer go; an article's header (its headline) stays
+    for tag in soup.find_all(['header', 'footer']):
+        if not tag.find_parent(['article', 'main']):
+            tag.decompose()
+    for tag in [t for t in soup.find_all(True) if t.attrs is not None and _is_noise(t)]:
+        if not tag.decomposed:
+            tag.decompose()
+
+    # The article itself when the page marks it, else the whole body
+    articles = soup.find_all('article')
+    root = (
+        max(articles, key=lambda a: len(a.get_text())) if articles
+        else soup.find('main') or soup.find(attrs={'role': 'main'}) or soup.body or soup
+    )
+
+    lines = (' '.join(line.split()) for line in root.get_text('\n').splitlines())
+    return title, '\n'.join(line for line in lines if line)
+
+
 class DocumentProcessor:
 
     def __init__(self):

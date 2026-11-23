@@ -70,7 +70,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 
 **Data Flow:**
 1. **Upload:** Document → Extract → Chunk → Embed → Store
-2. **Chat:** Question → Retrieve Context → LLM → Answer with Sources
+2. **Chat:** Question → search the added sources only (never code reviews), 8 passages → each passage labelled with its source's name, kind and when it was added → LLM → Answer with Sources. Passages are embedded with nomic's `search_document: ` prefix and questions with `search_query: `
 3. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → opening message built from the findings (exact counts, plus a note if a check had a problem) → chat session scoped to that review via `review_id`
 4. **Code Review chat (Ask Lens):** Question → the whole file with a number on every line, plus every finding → qwen2.5-coder:7b → Answer. A follow-up is sent as it was asked, not rewritten first. Only a file longer than `REVIEW_FULL_CODE_CHARS` is searched instead, and those passages are numbered too
 
@@ -140,13 +140,15 @@ cp .env.example .env
 | `CORS_ORIGINS` | `http://localhost:4200` | Comma-separated list of allowed frontend origins |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Where Ollama is running |
 | `LLM_MODEL` / `LLM_TEMPERATURE` | `llama3.2` / `0.7` | Chat model and temperature |
+| `LLM_NUM_CTX` | `8192` | Tokens the chat model reads at once: the passages and the chat history |
 | `REVIEW_LLM_MODEL` / `REVIEW_LLM_TEMPERATURE` / `REVIEW_LLM_SEED` | `qwen2.5-coder:7b` / `0` / `42` | Model, temperature and seed for code-review chats (Ask Lens); 0 and a fixed seed give the same answer to the same question |
 | `REVIEW_NUM_CTX` | `16384` | Tokens the review model reads at once: the whole numbered file, the findings and recent messages |
 | `REVIEW_FULL_CODE_CHARS` | `30000` | Longest file (in characters) sent whole; a longer one is searched instead |
 | `REVIEW_HISTORY_MESSAGES` | `8` | Earlier messages included in a code-review chat prompt |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model |
+| `EMBED_DOCUMENT_PREFIX` / `EMBED_QUERY_PREFIX` | `search_document: ` / `search_query: ` | Task prefixes nomic-embed-text expects; empty for a model without them. After changing either, run `scripts/reembed.py` |
 | `CHROMA_PERSIST_DIR` / `CHROMA_COLLECTION` | `./chroma_db` / `my_documents` | Vector store location/collection |
-| `RETRIEVAL_K` | `5` | Default number of chunks retrieved per query (document chats, and very long files in code-review chats) |
+| `RETRIEVAL_K` | `8` | Default number of chunks retrieved per query (document chats, and very long files in code-review chats) |
 | `EMBED_BATCH_SIZE` / `EMBED_ATTEMPTS` | `64` / `3` | Chunks embedded per Ollama request, and tries per batch before an upload fails |
 | `UPLOAD_DIR` / `MEDIA_DIR` | `./uploads` / `./uploads/media` | Where uploaded files/audio are saved |
 | `SESSIONS_FILE` | `./data/sessions.json` | Where chat sessions are saved |
@@ -175,6 +177,18 @@ python scripts/smoke_test.py
 
 Server will be available at: `http://localhost:5001`
 
+### Re-embedding what is stored
+
+After changing `EMBEDDING_MODEL`, `EMBED_DOCUMENT_PREFIX` or `EMBED_QUERY_PREFIX`, re-embed the chunks already stored, so old vectors match new questions. The text and metadata stay as they are. Stop Flask first and back up `chroma_db/`:
+
+```bash
+cp -R chroma_db chroma_db.backup
+python scripts/reembed.py --dry-run   # count the chunks
+python scripts/reembed.py             # about 1 minute per 2,000 chunks
+```
+
+Web pages added before the cleaning was introduced keep their menus and footers; remove and add them again to store only the article.
+
 ---
 
 ## 📡 API Reference
@@ -187,7 +201,7 @@ Server will be available at: `http://localhost:5001`
 |----------|--------|------|-------------|
 | `/upload/file` | POST | `file: <file>` | Upload PDF/TXT/MD |
 | `/upload/youtube` | POST | `{"url": "..."}` | Transcribe YouTube video |
-| `/upload/web` | POST | `{"url": "..."}` | Scrape web page |
+| `/upload/web` | POST | `{"url": "..."}` | Scrape a web page and store its readable text, without menus, footers, banners and "related articles" |
 | `/upload/code` | POST | `file: <code file>`, `session_id` | Upload code for review without attaching it to a chat session |
 
 ### Code Review Endpoints
@@ -295,6 +309,7 @@ llm-chatbot/
 │   ├── source_library.py       # Lists and removes sources
 │   ├── review_summary.py       # Builds the review's opening message
 │   ├── review_context.py       # What a code-review chat reads: numbered code + findings
+│   ├── document_context.py     # What a document chat reads: passages labelled with their source
 │   └── review_client.py        # Code review service client
 │
 ├── src/config.py                # Central configuration (reads .env)
@@ -308,6 +323,7 @@ llm-chatbot/
 │   ├── conftest.py
 │   ├── test_api.py
 │   ├── test_document_processor.py
+│   ├── test_document_search.py
 │   ├── test_file_manager.py
 │   ├── test_review_client.py
 │   ├── test_review_context.py
@@ -318,6 +334,7 @@ llm-chatbot/
 │   └── test_vector_store.py
 │
 ├── scripts/
+│   ├── reembed.py               # Re-embeds stored chunks after an embedding change
 │   └── smoke_test.py            # Manual smoke test (needs real servers running)
 │
 ├── uploads/                    # Uploaded files

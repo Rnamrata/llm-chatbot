@@ -77,9 +77,19 @@ class FakeChroma:
         self._next_id = 0  # ids stay unique after deletes
 
     def _matches(self, metadata, where):
+        """The parts of Chroma's "where" filter the app uses: equality, $in and $and"""
         if not where:
             return True
-        return all(metadata.get(k) == v for k, v in where.items())
+        if '$and' in where:
+            return all(self._matches(metadata, part) for part in where['$and'])
+        for key, wanted in where.items():
+            value = (metadata or {}).get(key)
+            if isinstance(wanted, dict) and '$in' in wanted:
+                if value not in wanted['$in']:
+                    return False
+            elif value != wanted:
+                return False
+        return True
 
     def add_documents(self, documents):
         ids = []
