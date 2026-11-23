@@ -376,9 +376,13 @@ class FileManager:
                         'file': finding.get('file', filename),
                         'line': finding.get('line') or 0,
                         'severity': finding.get('severity', 'info'),
-                        'message': finding.get('message', ''),'category': finding.get('category') or '',
+                        'message': finding.get('message', ''),
+                        'category': finding.get('category') or '',
                         'finding_source': finding.get('source') or '',
-                        'suggestion': finding.get('suggestion') or ''
+                        'suggestion': finding.get('suggestion') or '',
+                        # The "why" card (reason, fix, source and link). Chroma only stores plain
+                        # values, so it is kept as JSON text; '' when the finding has none.
+                        'why_json': json.dumps(finding['why']) if isinstance(finding.get('why'), dict) else ''
                     }
                 ))
 

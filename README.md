@@ -73,7 +73,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 1. **Upload:** Document → Extract → Chunk → Embed → Store
 2. **Chat:** Question → search the added sources only (never code reviews), or the chat's own sources when it has some, 8 passages (with several sources of its own, each gets a share, at least one passage, so a large book can't crowd out a short video) → each passage labelled with its source's name, kind and when it was added → LLM → Answer with Sources. Passages are embedded with nomic's `search_document: ` prefix and questions with `search_query: `
 3. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → opening message built from the findings (exact counts, plus a note if a check had a problem) → chat session scoped to that review via `review_id`
-4. **Code Review chat (Ask Lens):** Question → the whole file with a number on every line, plus every finding → qwen2.5-coder:7b → Answer. A follow-up is sent as it was asked, not rewritten first. Only a file longer than `REVIEW_FULL_CODE_CHARS` is searched instead, and those passages are numbered too
+4. **Code Review chat (Ask Lens):** Question → the whole file with a number on every line, plus every finding → qwen2.5-coder:7b → Answer. A follow-up is sent as it was asked, not rewritten first. When the answer is about a line whose finding has a "why" card, Lens adds that card's source link at the end (the model is given the reason but not asked to cite it, because it rarely did). Only a file longer than `REVIEW_FULL_CODE_CHARS` is searched instead, and those passages are numbered too
 
 ---
 
@@ -281,7 +281,15 @@ Sessions are saved to `SESSIONS_FILE` (`data/sessions.json` by default) whenever
       "severity": "high",
       "category": "security",
       "message": "SQL injection vulnerability",
-      "source": "llm"
+      "source": "llm",
+      "why": {
+        "id": "sql-injection",
+        "title": "SQL built from input",
+        "reason": "Text that reaches the query can change what it does: one quote in a name can read, change or delete other rows.",
+        "fix": "Use a PreparedStatement with ? placeholders and set each value with setString, setInt and so on.",
+        "source": "Java tutorial: Using Prepared Statements",
+        "url": "https://docs.oracle.com/javase/tutorial/jdbc/basics/prepared.html"
+      }
     }
   ],
   "warnings": [
@@ -292,7 +300,7 @@ Sessions are saved to `SESSIONS_FILE` (`data/sessions.json` by default) whenever
 }
 ```
 
-The `summary` is built in code from the findings, so its counts always match the list. `warnings` are problems one part of the review had while the rest still completed. If the review service cannot be reached at all, `findings` is empty, `summary` says the code could not be reviewed, and a `warning` field explains why.
+The `summary` is built in code from the findings, so its counts always match the list. A finding has `why` when the review service matched it to one of its cards: why it matters, the fix and a source to read. It is stored with the review, so `GET /review/{review_id}` returns it too, and Ask Lens reads it. `warnings` are problems one part of the review had while the rest still completed. If the review service cannot be reached at all, `findings` is empty, `summary` says the code could not be reviewed, and a `warning` field explains why.
 
 ---
 

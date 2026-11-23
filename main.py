@@ -9,6 +9,7 @@ import src.modules.review_client as review_client_module
 from src.modules.review_summary import build_headline, SEVERITY_ORDER
 from src.modules.source_library import SourceLibrary, source_id
 from src.modules.session_store import SessionStore
+from src.modules.review_context import parse_why
 from werkzeug.utils import secure_filename
 from src import config
 import hashlib
@@ -282,6 +283,9 @@ def _load_review(review_id):
             for key, stored in (('category', 'category'), ('source', 'finding_source'), ('suggestion', 'suggestion')):
                 if metadata.get(stored):
                     finding[key] = metadata[stored]
+            why = parse_why(metadata.get('why_json'))
+            if why:
+                finding['why'] = why
             review['findings'].append(finding)
 
     # Same order as the review service: most serious first, then by line
