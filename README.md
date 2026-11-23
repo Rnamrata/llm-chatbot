@@ -142,7 +142,7 @@ cp .env.example .env
 | `LLM_MODEL` / `LLM_TEMPERATURE` | `llama3.2` / `0.7` | Chat model and temperature |
 | `LLM_NUM_CTX` | `8192` | Tokens the chat model reads at once: the passages and the chat history |
 | `REVIEW_LLM_MODEL` / `REVIEW_LLM_TEMPERATURE` / `REVIEW_LLM_SEED` | `qwen2.5-coder:7b` / `0` / `42` | Model, temperature and seed for code-review chats (Ask Lens); 0 and a fixed seed give the same answer to the same question |
-| `REVIEW_NUM_CTX` | `16384` | Tokens the review model reads at once: the whole numbered file, the findings and recent messages |
+| `REVIEW_NUM_CTX` | `16384` | Tokens the review model reads at once: the whole numbered file, the findings and recent messages. Keep it equal to the review service's `LLM_NUM_CTX`: both use the same model, and Ollama reloads it to change the context size |
 | `REVIEW_FULL_CODE_CHARS` | `30000` | Longest file (in characters) sent whole; a longer one is searched instead |
 | `REVIEW_HISTORY_MESSAGES` | `8` | Earlier messages included in a code-review chat prompt |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model |
@@ -154,7 +154,7 @@ cp .env.example .env
 | `SESSIONS_FILE` | `./data/sessions.json` | Where chat sessions are saved |
 | `MAX_UPLOAD_MB` | `20` | Max upload size |
 | `WHISPER_MODEL` | `base` | Whisper model for YouTube transcription; loaded on first use (the first transcription downloads it) |
-| `REVIEW_SERVICE_URL` / `REVIEW_TIMEOUT_SECONDS` | `http://localhost:4000` / `60` | Where the code review service is running |
+| `REVIEW_SERVICE_URL` / `REVIEW_TIMEOUT_SECONDS` | `http://localhost:4000` / `120` | Where the code review service is running, and how long to wait for a review (longer than its `LLM_TIMEOUT_MS`, 90 s). The health check waits 5 s |
 
 ---
 

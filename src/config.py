@@ -72,7 +72,9 @@ SESSIONS_FILE = _path("SESSIONS_FILE", "./data/sessions.json")
 
 # ===== Code review service (Node.js) =====
 REVIEW_SERVICE_URL = os.getenv("REVIEW_SERVICE_URL", "http://localhost:4000").rstrip("/")
-REVIEW_TIMEOUT_SECONDS = int(os.getenv("REVIEW_TIMEOUT_SECONDS", 60))
+# Longer than the review service's own AI limit (LLM_TIMEOUT_MS, 90 s), so a slow AI review
+# comes back with the linters' findings and a warning instead of failing here
+REVIEW_TIMEOUT_SECONDS = int(os.getenv("REVIEW_TIMEOUT_SECONDS", 120))
 
 # ===== Chunking =====
 CHUNK_SIZE = 1000
