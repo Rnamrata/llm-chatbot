@@ -8,7 +8,7 @@ from src import config
 DOCS_PROMPT_TEMPLATE = """You are a helpful AI assistant. Use the following context from documents and the chat history to answer the question.
 If you cannot answer based on the context provided, say so clearly.
 Each passage starts with its source in square brackets: the source's name, what kind it is and when it was added. Use it to tell which source the question means ("the PDF", "the video", "the newest one").
-When you say where something comes from, use the source's name in plain words (for example: according to "The trust inversion"). Do not copy the square brackets, the kind or the date, and do not start your answer with a source.
+When you say where something comes from, use the source's name as it appears in the brackets, in plain words. Do not copy the square brackets, the kind or the date, do not name a source that is not in the passages, and do not start your answer with a source.
 When a passage lists several facts or numbers, give all of them.
 The current question may refer to earlier messages ("it", "that part", "only the changes"); use the chat history to understand what it means, and answer the current question rather than repeating an earlier answer.
 

@@ -211,3 +211,26 @@ def test_a_page_with_no_readable_text_is_refused(client, monkeypatch):
     result = main.file_manager.webFileUpload('https://example.com/empty')
 
     assert result == {'error': 'No readable text found on that page', 'success': False}
+
+
+def test_settings_in_the_page_class_do_not_remove_the_page():
+    from src.modules.document_processor import clean_web_page
+
+    page = (
+        '<html class="client-js vector-feature-main-menu-pinned-disabled"><body class="skin-vector">'
+        '<nav class="main-menu">Menu</nav><main><h1>Lens</h1><p>A lens focuses light.</p></main></body></html>'
+    )
+    _, text = clean_web_page(BeautifulSoup(page, 'html.parser'))
+
+    assert text == 'Lens\nA lens focuses light.'
+
+
+def test_a_container_named_like_furniture_that_holds_the_article_is_kept():
+    from src.modules.document_processor import clean_web_page
+
+    article = ' '.join(['Long article text about optics.'] * 20)
+    page = f'<body><div class="layout-with-sidebar"><p>{article}</p><div class="sidebar">Links</div></div></body>'
+    _, text = clean_web_page(BeautifulSoup(page, 'html.parser'))
+
+    assert 'Long article text about optics.' in text
+    assert 'Links' not in text

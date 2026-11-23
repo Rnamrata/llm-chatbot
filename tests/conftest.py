@@ -108,6 +108,10 @@ class FakeChroma:
         ]
         return matched[:k]
 
+    def similarity_search_with_score(self, query, k=4, filter=None, **kwargs):
+        """Matching documents in the order stored, each with distance 0"""
+        return [(d, 0.0) for d in self.max_marginal_relevance_search(query, k=k, filter=filter)]
+
     def as_retriever(self, search_kwargs=None):
         search_kwargs = search_kwargs or {}
         return _FakeRetriever(store=self, k=search_kwargs.get('k', 4), filter=search_kwargs.get('filter'))

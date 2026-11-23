@@ -288,3 +288,27 @@ def test_an_answer_that_names_no_source_shows_them_all():
     ]
 
     assert sources_named_in('Gradient descent lowers the loss.', docs) == docs
+
+
+def test_a_chat_with_several_sources_reads_from_each_of_them(client):
+    import main
+    for i in range(12):
+        _add('book.pdf', f'Book passage {i}.')
+    _add('talk.mp3', 'The only passage of the talk.', doc_type='youtube')
+    _add('other.pdf', 'Not chosen.')
+    ids = _ids(client)
+
+    result = client.post('/chat', json={
+        'question': 'What is this about?', 'session_id': 'c1', 'source_ids': [ids['book.pdf'], ids['talk.mp3']]
+    }).get_json()
+
+    used = [s['metadata']['source'] for s in main.chat_manager.sessions['c1']['messages'][-1]['sources']]
+    assert 'talk.mp3' in used  # the small source is read too
+    assert 'other.pdf' not in used
+    assert len(used) == 8
+
+
+def test_answer_instructions_name_no_real_source():
+    from src.modules.llm_manager import DOCS_PROMPT_TEMPLATE
+
+    assert 'trust inversion' not in DOCS_PROMPT_TEMPLATE.lower()
