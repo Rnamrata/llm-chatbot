@@ -59,7 +59,7 @@ class FileManager:
 
         return self._whisper_model
 
-    def uploadFile(self, file):
+    def uploadFile(self, file, content_hash=None):
         """
         Upload file from device
         Automatically: Extract → Chunk → Embed → Store
@@ -67,6 +67,8 @@ class FileManager:
         Args:
             file: A file object with .filename and .save(path), e.g. Flask's
                   request.files['file']
+            content_hash: SHA-256 of the file's bytes, stored with its chunks so the
+                  same file added again can be recognised
         """
         try:
             filename = secure_filename(file.filename)
@@ -87,7 +89,7 @@ class FileManager:
             # Chunk the content
             chunks = self.document_processor.chunkDocument(
                 content=content,
-                metadata={'source': filename, 'type': 'file_upload', 'added_at': now_iso()}
+                metadata={'source': filename, 'type': 'file_upload', 'added_at': now_iso(), 'content_hash': content_hash or ''}
             )
             
             if not chunks:

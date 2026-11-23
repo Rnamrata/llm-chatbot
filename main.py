@@ -11,6 +11,7 @@ from src.modules.source_library import SourceLibrary, source_id
 from src.modules.session_store import SessionStore
 from werkzeug.utils import secure_filename
 from src import config
+import hashlib
 import uuid
 import json
 import requests 
@@ -29,21 +30,42 @@ sources = SourceLibrary(vector_store)
 
 # ==================== UPLOAD ENDPOINTS ====================
 
+def _upload_session_id():
+    """The chat a source is added from (optional): the new source joins that chat's sources"""
+    return request.form.get('session_id') or (request.get_json(silent=True) or {}).get('session_id')
+
+
 @app.route('/upload/file', methods=['POST'])
 def upload_file():
     """
     Upload a file from device
     Automatically processes, chunks, embeds, and stores
-    
+
     Form data:
         - file: The file to upload (PDF, TXT, MD)
+        - session_id: The chat it is added from (optional)
+
+    The same file (same name and content) already in Sources is reused, not stored
+    again. A file with the same name but new content replaces the older copy.
     """
     file = request.files.get('file')
     if not file:
        return jsonify({'error': 'No file provided', 'success': False}), 400
 
     name = secure_filename(file.filename)
-    return _track_upload(name, name, 'file_upload', lambda: file_manager.uploadFile(file))
+    content_hash = hashlib.sha256(file.read()).hexdigest()
+    file.stream.seek(0)
+    session_id = _upload_session_id()
+
+    existing = sources.find(name)
+    if existing and existing['status'] == 'ready' and existing.get('content_hash') == content_hash:
+        return _reuse(existing, session_id)
+
+    older_copy = sources.chunk_ids(name) if existing else []
+    return _track_upload(
+        name, name, 'file_upload', lambda: file_manager.uploadFile(file, content_hash),
+        session_id=session_id, replaces=older_copy,
+    )
 
 
 @app.route('/upload/youtube', methods=['POST'])
@@ -58,7 +80,7 @@ def upload_youtube():
     url = request.form.get('url') or (request.get_json(silent=True) or {}).get('url')
     if not url:
         return jsonify({'error': 'No URL provided', 'success': False}), 400
-    return _track_upload(url, url, 'youtube', lambda: file_manager.uploadMediaFile(url))
+    return _add_link(url, 'youtube', lambda: file_manager.uploadMediaFile(url))
 
 
 @app.route('/upload/web', methods=['POST'])
@@ -73,13 +95,40 @@ def upload_web():
     url = request.form.get('url') or (request.get_json(silent=True) or {}).get('url')
     if not url:
         return jsonify({'error': 'No URL provided', 'success': False}), 400
-    return _track_upload(url, url, 'web', lambda: file_manager.webFileUpload(url))
+    return _add_link(url, 'web', lambda: file_manager.webFileUpload(url))
 
 
-def _track_upload(source, name, doc_type, upload):
+def _add_link(url, doc_type, upload):
+    """A link already in Sources is reused: downloading and transcribing it again would give the same text"""
+    session_id = _upload_session_id()
+    existing = sources.find(url)
+    if existing and existing['status'] == 'ready':
+        return _reuse(existing, session_id)
+    return _track_upload(url, url, doc_type, upload, session_id=session_id)
+
+
+def _reuse(existing, session_id):
+    """The answer for a source that is already in Sources: nothing is stored again"""
+    if session_id:
+        chat_manager.add_source(session_id, existing['source'])
+    return jsonify({
+        'success': True,
+        'reused': True,
+        'message': 'Already in your sources',
+        'chunks_created': 0,
+        'source': existing,
+        'session_id': session_id,
+    }), 200
+
+
+def _track_upload(source, name, doc_type, upload, session_id=None, replaces=()):
     """
     Runs an upload while GET /sources shows it as 'processing', and adds the
     stored source (id, name, chunk count) to a successful response
+
+    Args:
+        session_id: The chat the source is added from; it joins that chat's sources
+        replaces: Chunk ids of an older copy, removed once the new one is stored
     """
     sources.start(source, name, doc_type)
     try:
@@ -89,6 +138,13 @@ def _track_upload(source, name, doc_type, upload):
 
     if not result.get('success'):
         return jsonify(result), 400
+
+    if replaces:
+        vector_store.vectorstore.delete(ids=list(replaces))
+        result['replaced'] = True
+    if session_id:
+        chat_manager.add_source(session_id, source)
+        result['session_id'] = session_id
 
     result['source'] = sources.get(source_id(source))
     return jsonify(result), 200
@@ -277,9 +333,12 @@ def chat():
     JSON body:
         - question: User's question (required)
         - session_id: Session ID for conversation continuity (optional)
-        - k: Number of relevant chunks to retrieve (optional, default: 5)
+        - k: Number of relevant chunks to retrieve (optional, default: RETRIEVAL_K, 8)
         - review_id: The review this chat is about (optional); restores review
                 mode if the session was lost, e.g. after a restart
+        - source_ids: The sources this chat answers from (optional; ids from GET
+                /sources). Sets them before answering; [] means every source.
+                Ids no longer in Sources are left out.
     """
     try:
         data = request.get_json()
@@ -296,8 +355,17 @@ def chat():
             review = _load_review(review_id)
             if review is not None:
                 chat_manager.attach_review(session_id, review_id, review['summary'], review['filename'], review['language'])
-        
+
+        if 'source_ids' in data:
+            error = _source_ids_error(data['source_ids'])
+            if error:
+                return jsonify({'error': error, 'success': False}), 400
+            if chat_manager.set_sources(session_id, sources.resolve(data['source_ids'])) is None:
+                return jsonify({'error': "A code review's chat answers from its own code, not from sources", 'success': False}), 400
+
         result = chat_manager.query(question, session_id, k=k)
+        if result.get('success'):
+            result['source_ids'] = chat_manager.get_session_info(session_id).get('source_ids', [])
         return jsonify(result)
         
     except Exception as e:
@@ -341,6 +409,41 @@ def update_session(session_id):
     if session is None:
         return jsonify({'error': 'Session not found', 'success': False}), 404
     return jsonify({'success': True, 'session': session})
+
+
+def _source_ids_error(ids):
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        return 'source_ids must be a list of source ids'
+    return None
+
+
+@app.route('/chat/session/<session_id>/sources', methods=['PUT'])
+def set_chat_sources(session_id):
+    """
+    Choose the sources a chat answers from, e.g. "Start a chat with these" in Sources
+
+    JSON body:
+        - source_ids: Ids from GET /sources; [] means every source. Ids no longer in
+                Sources are left out. Creates the chat if it is new.
+
+    Returns the session as GET /chat/sessions lists it, with source_ids and
+    source_count, plus sources: id, name and type of each.
+    """
+    data = request.get_json(silent=True) or {}
+    error = _source_ids_error(data.get('source_ids'))
+    if error:
+        return jsonify({'error': error, 'success': False}), 400
+
+    chosen = sources.resolve(data['source_ids'])
+    session = chat_manager.set_sources(session_id, chosen)
+    if session is None:
+        return jsonify({'error': "A code review's chat answers from its own code, not from sources", 'success': False}), 400
+
+    named = [
+        {'id': s['id'], 'name': s['name'], 'type': s['type']}
+        for s in (sources.find(c) for c in chosen) if s
+    ]
+    return jsonify({'success': True, 'session': session, 'sources': named})
 
 
 @app.route('/chat/history/<session_id>', methods=['GET'])
