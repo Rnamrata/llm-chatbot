@@ -72,6 +72,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 1. **Upload:** Document → Extract → Chunk → Embed → Store
 2. **Chat:** Question → Retrieve Context → LLM → Answer with Sources
 3. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → opening message built from the findings (exact counts, plus a note if a check had a problem) → chat session scoped to that review via `review_id`
+4. **Code Review chat (Ask Lens):** Question → the whole file with a number on every line, plus every finding → qwen2.5-coder:7b → Answer. A follow-up is sent as it was asked, not rewritten first. Only a file longer than `REVIEW_FULL_CODE_CHARS` is searched instead, and those passages are numbered too
 
 ---
 
@@ -80,7 +81,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 | Component | Technology |
 |-----------|-----------|
 | Backend | Flask 3.0+ |
-| LLM | Ollama (llama3.2) |
+| LLM | Ollama (llama3.2 for document chats, qwen2.5-coder:7b for code-review chats) |
 | Embeddings | nomic-embed-text |
 | Vector DB | ChromaDB |
 | Framework | LangChain |
@@ -108,6 +109,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 # 2. Start Ollama and pull models
 ollama serve
 ollama pull llama3.2
+ollama pull qwen2.5-coder:7b
 ollama pull nomic-embed-text
 
 # 3. Install FFmpeg
@@ -138,10 +140,13 @@ cp .env.example .env
 | `CORS_ORIGINS` | `http://localhost:4200` | Comma-separated list of allowed frontend origins |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Where Ollama is running |
 | `LLM_MODEL` / `LLM_TEMPERATURE` | `llama3.2` / `0.7` | Chat model and temperature |
-| `REVIEW_LLM_TEMPERATURE` | `0.2` | Lower temperature used for code-review chat mode |
+| `REVIEW_LLM_MODEL` / `REVIEW_LLM_TEMPERATURE` / `REVIEW_LLM_SEED` | `qwen2.5-coder:7b` / `0` / `42` | Model, temperature and seed for code-review chats (Ask Lens); 0 and a fixed seed give the same answer to the same question |
+| `REVIEW_NUM_CTX` | `16384` | Tokens the review model reads at once: the whole numbered file, the findings and recent messages |
+| `REVIEW_FULL_CODE_CHARS` | `30000` | Longest file (in characters) sent whole; a longer one is searched instead |
+| `REVIEW_HISTORY_MESSAGES` | `8` | Earlier messages included in a code-review chat prompt |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model |
 | `CHROMA_PERSIST_DIR` / `CHROMA_COLLECTION` | `./chroma_db` / `my_documents` | Vector store location/collection |
-| `RETRIEVAL_K` | `5` | Default number of chunks retrieved per query |
+| `RETRIEVAL_K` | `5` | Default number of chunks retrieved per query (document chats, and very long files in code-review chats) |
 | `EMBED_BATCH_SIZE` / `EMBED_ATTEMPTS` | `64` / `3` | Chunks embedded per Ollama request, and tries per batch before an upload fails |
 | `UPLOAD_DIR` / `MEDIA_DIR` | `./uploads` / `./uploads/media` | Where uploaded files/audio are saved |
 | `SESSIONS_FILE` | `./data/sessions.json` | Where chat sessions are saved |
@@ -289,6 +294,7 @@ llm-chatbot/
 │   ├── session_store.py        # Saves sessions to data/sessions.json
 │   ├── source_library.py       # Lists and removes sources
 │   ├── review_summary.py       # Builds the review's opening message
+│   ├── review_context.py       # What a code-review chat reads: numbered code + findings
 │   └── review_client.py        # Code review service client
 │
 ├── src/config.py                # Central configuration (reads .env)
@@ -304,10 +310,12 @@ llm-chatbot/
 │   ├── test_document_processor.py
 │   ├── test_file_manager.py
 │   ├── test_review_client.py
+│   ├── test_review_context.py
 │   ├── test_review_details.py
 │   ├── test_review_summary.py
 │   ├── test_sessions.py
-│   └── test_sources.py
+│   ├── test_sources.py
+│   └── test_vector_store.py
 │
 ├── scripts/
 │   └── smoke_test.py            # Manual smoke test (needs real servers running)
@@ -401,7 +409,7 @@ Use Postman, cURL, or Python requests to test endpoints. See [Usage Examples](#-
 
 | Issue | Solution |
 |-------|----------|
-| "Ollama call failed 404" | Run `ollama pull llama3.2` and `ollama pull nomic-embed-text` |
+| "Ollama call failed 404" | Run `ollama pull llama3.2`, `ollama pull qwen2.5-coder:7b` and `ollama pull nomic-embed-text` |
 | "Connection refused" | Ensure both Ollama (`ollama serve`) and Flask (`python main.py`) are running |
 | "415 Unsupported Media Type" | Add header: `-H "Content-Type: application/json"` |
 | "FFmpeg not found" | Install FFmpeg: `brew install ffmpeg` (macOS) or `apt-get install ffmpeg` (Linux) |

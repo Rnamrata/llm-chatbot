@@ -27,7 +27,20 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:4
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.7))
-REVIEW_LLM_TEMPERATURE = float(os.getenv("REVIEW_LLM_TEMPERATURE", 0.2))
+# Ask Lens (code-review chat) has its own model: a coding model reads code better
+# than the general chat model, and the review service already uses this one
+REVIEW_LLM_MODEL = os.getenv("REVIEW_LLM_MODEL", "qwen2.5-coder:7b")
+# Temperature 0 and a fixed seed: the same question about the same code gets the
+# same answer, as the review service does, so a good answer stays good
+REVIEW_LLM_TEMPERATURE = float(os.getenv("REVIEW_LLM_TEMPERATURE", 0))
+REVIEW_LLM_SEED = int(os.getenv("REVIEW_LLM_SEED", 42))
+# Tokens the review model may read at once. Ask Lens sends the whole numbered file and
+# every finding, which does not fit Ollama's default.
+REVIEW_NUM_CTX = int(os.getenv("REVIEW_NUM_CTX", 16384))
+# A file longer than this (in characters) is searched instead of sent whole
+REVIEW_FULL_CODE_CHARS = int(os.getenv("REVIEW_FULL_CODE_CHARS", 30000))
+# Earlier questions and answers an Ask Lens prompt includes
+REVIEW_HISTORY_MESSAGES = int(os.getenv("REVIEW_HISTORY_MESSAGES", 8))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 
 # ===== Vector store =====
