@@ -30,7 +30,16 @@ NOISE_WORDS = {
 }
 
 
+# The page itself and its main content are never site furniture, whatever their class says:
+# Wikipedia's <html> carries settings such as "vector-feature-language-in-main-menu-disabled".
+CONTENT_TAGS = {'html', 'body', 'main', 'article'}
+# An element holding more than this share of the page's text is the content, not a menu
+CONTENT_SHARE = 0.5
+
+
 def _is_noise(tag):
+    if tag.name in CONTENT_TAGS or (tag.get('role') or '').lower() == 'main':
+        return False
     if tag.get('aria-hidden') == 'true' or (tag.get('role') or '').lower() in NOISE_ROLES:
         return True
     names = ' '.join(tag.get('class') or []) + ' ' + (tag.get('id') or '')
@@ -56,9 +65,14 @@ def clean_web_page(soup):
     for tag in soup.find_all(['header', 'footer']):
         if not tag.find_parent(['article', 'main']):
             tag.decompose()
+    page_chars = len(soup.get_text(' ', strip=True)) or 1
     for tag in [t for t in soup.find_all(True) if t.attrs is not None and _is_noise(t)]:
-        if not tag.decomposed:
-            tag.decompose()
+        if tag.decomposed:
+            continue
+        # A container named like furniture that holds most of the page is the page's content
+        if len(tag.get_text(' ', strip=True)) / page_chars > CONTENT_SHARE:
+            continue
+        tag.decompose()
 
     # The article itself when the page marks it, else the whole body
     articles = soup.find_all('article')
