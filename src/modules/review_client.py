@@ -1,6 +1,10 @@
 import requests
 from src import config
 
+# Seconds a health check may take; a review gets config.REVIEW_TIMEOUT_SECONDS
+HEALTH_TIMEOUT_SECONDS = 5
+
+
 class ReviewClient:
     """Client for the code review service"""
 
@@ -16,7 +20,7 @@ class ReviewClient:
         self.base_url = (base_url or config.REVIEW_SERVICE_URL).rstrip("/")
         self.timeout = timeout or config.REVIEW_TIMEOUT_SECONDS
 
-    def _request(self, method, path, **kwargs):
+    def _request(self, method, path, timeout=None, **kwargs):
         """
         Make a request to the review service, translating network failures
         into a consistent error shape instead of raising
@@ -24,18 +28,20 @@ class ReviewClient:
         Args:
             method: HTTP method ("get" or "post")
             path: Path on the review service, e.g. "/review"
+            timeout: Seconds to wait (default: this client's review timeout)
             **kwargs: Extra arguments passed to requests (e.g. json=...)
 
         Returns:
             dict: {'success': True, 'data': dict} or {'success': False, 'error': str}
         """
 
-        try: 
+        timeout = timeout or self.timeout
+        try:
             response = requests.request(
-                method, f"{self.base_url}{path}", timeout=self.timeout, **kwargs
+                method, f"{self.base_url}{path}", timeout=timeout, **kwargs
             )
         except requests.exceptions.Timeout:
-            return {'success': False, 'error': f'Review service timed out after {self.timeout}s'}
+            return {'success': False, 'error': f'Review service timed out after {timeout}s'}
         except requests.exceptions.ConnectionError:
             return {'success': False, 'error': 'Review service is unreachable (connection refused)'}
         except requests.exceptions.RequestException as e:
@@ -128,7 +134,8 @@ class ReviewClient:
             dict: {'success': True, 'status': ...} or {'success': False, 'error': str}
         """
 
-        result = self._request('get', '/health')
+        # A health check answers at once or not at all: it must not wait as long as a review
+        result = self._request('get', '/health', timeout=HEALTH_TIMEOUT_SECONDS)
 
         if not result['success']:
             return result

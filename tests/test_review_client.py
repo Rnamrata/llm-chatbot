@@ -82,3 +82,33 @@ def test_review_keeps_only_source_and_message_of_a_warning(review_client):
     })
 
     assert result['warnings'] == [{'source': 'llm', 'message': 'm'}]
+
+def test_a_review_waits_120_seconds_by_default(monkeypatch):
+    monkeypatch.delenv('REVIEW_TIMEOUT_SECONDS', raising=False)
+    monkeypatch.setattr('dotenv.load_dotenv', lambda *a, **kw: None)
+    import importlib
+    from src import config
+    config = importlib.reload(config)
+
+    assert config.REVIEW_TIMEOUT_SECONDS == 120
+
+
+def test_the_health_check_does_not_wait_as_long_as_a_review():
+    client = ReviewClient(base_url='http://fake-review:4000', timeout=120)
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {'status': 'ok'}
+
+    with patch('src.modules.review_client.requests.request', return_value=fake_response) as mock_request:
+        client.health()
+
+    assert mock_request.call_args.kwargs['timeout'] == 5
+
+
+def test_a_review_uses_the_review_timeout(review_client):
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {'findings': []}
+
+    with patch('src.modules.review_client.requests.request', return_value=fake_response) as mock_request:
+        review_client.review('a.py', 'python', 'x = 1')
+
+    assert mock_request.call_args.kwargs['timeout'] == 5
