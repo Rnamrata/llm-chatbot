@@ -1,4 +1,6 @@
 import time
+import httpx
+from ollama import ResponseError
 from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
@@ -7,6 +9,20 @@ from src import config
 
 # Seconds to wait before retrying a batch; doubles with each retry
 RETRY_DELAY_SECONDS = 1.0
+
+
+def is_temporary(error):
+    """
+    Whether trying the same batch again could work: the connection to Ollama
+    failed, timed out or dropped ("EOF"), or Ollama itself had a server error.
+    Anything else, such as text that can't be encoded or a model that isn't
+    installed, fails the same way every time.
+    """
+    if isinstance(error, (ConnectionError, TimeoutError, httpx.TransportError)):
+        return True
+    if isinstance(error, ResponseError):
+        return error.status_code >= 500 or error.status_code == 429 or 'EOF' in str(error)
+    return False
 
 
 class PrefixedEmbeddings(Embeddings):
@@ -90,7 +106,8 @@ class VectorStoreAndEmbedding:
     def _add_with_retry(self, batch):
         """
         Embeds and stores one batch. Ollama sometimes drops a connection mid-request
-        ("EOF"), so a failed batch is tried again before giving up.
+        ("EOF"), so a batch that fails that way is tried again before giving up. Any
+        other error fails the upload at once, because trying again can't fix it.
 
         Returns:
             list: The ids Chroma gave the stored chunks
@@ -99,7 +116,7 @@ class VectorStoreAndEmbedding:
             try:
                 return self.vectorstore.add_documents(batch)
             except Exception as e:
-                if attempt == config.EMBED_ATTEMPTS:
+                if attempt == config.EMBED_ATTEMPTS or not is_temporary(e):
                     raise
                 print(f"⚠️  Embedding {len(batch)} chunks failed ({e}); trying again ({attempt}/{config.EMBED_ATTEMPTS - 1})")
                 time.sleep(RETRY_DELAY_SECONDS * 2 ** (attempt - 1))

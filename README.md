@@ -150,7 +150,7 @@ cp .env.example .env
 | `EMBED_DOCUMENT_PREFIX` / `EMBED_QUERY_PREFIX` | `search_document: ` / `search_query: ` | Task prefixes nomic-embed-text expects; empty for a model without them. After changing either, run `scripts/reembed.py` |
 | `CHROMA_PERSIST_DIR` / `CHROMA_COLLECTION` | `./chroma_db` / `my_documents` | Vector store location/collection |
 | `RETRIEVAL_K` | `8` | Default number of chunks retrieved per query (document chats, and very long files in code-review chats) |
-| `EMBED_BATCH_SIZE` / `EMBED_ATTEMPTS` | `64` / `3` | Chunks embedded per Ollama request, and tries per batch before an upload fails |
+| `EMBED_BATCH_SIZE` / `EMBED_ATTEMPTS` | `64` / `3` | Chunks embedded per Ollama request, and tries per batch before an upload fails. Only a dropped connection, a timeout or an Ollama server error is tried again; any other error (text that can't be encoded, a model that isn't installed) fails the upload at once |
 | `UPLOAD_DIR` / `MEDIA_DIR` | `./uploads` / `./uploads/media` | Where uploaded files/audio are saved |
 | `SESSIONS_FILE` | `./data/sessions.json` | Where chat sessions are saved |
 | `MAX_UPLOAD_MB` | `20` | Max upload size |
