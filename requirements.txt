@@ -10,6 +10,7 @@ langchain-core==1.6.5
 langchain-classic==1.0.8
 langchain-text-splitters==1.1.2
 langchain-ollama==1.1.0
+ollama==0.6.2  # its error types decide which embedding failures are retried
 langchain-chroma==1.1.0
 
 # Vector Database
@@ -24,6 +25,7 @@ yt-dlp==2026.8.19
 
 # HTTP and Web Scraping
 requests==2.34.2
+httpx==0.28.1
 beautifulsoup4==4.15.0
 lxml==6.1.3
 

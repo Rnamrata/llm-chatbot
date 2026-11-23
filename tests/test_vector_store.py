@@ -1,7 +1,9 @@
 import io
 
+import httpx
 import pytest
 from langchain_core.documents import Document
+from ollama import ResponseError
 
 
 def _docs(n):
@@ -20,15 +22,16 @@ def _stored(store):
     return len(store.vectorstore.get()['ids'])
 
 
-def _flaky(store, monkeypatch, fail_calls):
-    """Makes the given add_documents calls (1-based) fail like a dropped Ollama connection"""
+def _flaky(store, monkeypatch, fail_calls, error=None):
+    """Makes the given add_documents calls (1-based) fail, by default like a dropped Ollama connection"""
     real_add = store.vectorstore.add_documents
     calls = []
 
     def add(documents):
         calls.append(len(documents))
         if len(calls) in fail_calls:
-            raise ValueError('Post "http://127.0.0.1:52804/tokenize": EOF (status code: 400)')
+            # What Ollama's client raises when the connection drops mid-request
+            raise error or ResponseError('Post "http://127.0.0.1:52804/tokenize": EOF', 400)
         return real_add(documents)
 
     monkeypatch.setattr(store.vectorstore, 'add_documents', add)
@@ -58,7 +61,7 @@ def test_a_batch_that_fails_once_is_retried(store, monkeypatch):
 def test_a_batch_that_keeps_failing_leaves_nothing_behind(store, monkeypatch):
     calls = _flaky(store, monkeypatch, fail_calls={2, 3, 4})
 
-    with pytest.raises(ValueError, match='EOF'):
+    with pytest.raises(ResponseError, match='EOF'):
         store.store_chunks(_docs(150))
 
     assert calls == [64, 64, 64, 64]  # first batch, then three tries of the second
@@ -103,3 +106,34 @@ def test_a_pdf_with_a_broken_maths_character_can_be_added(client, store, monkeyp
 
     assert response.status_code == 200, response.get_json()
     assert response.get_json()['success'] is True
+
+@pytest.mark.parametrize('error', [
+    UnicodeEncodeError('utf-8', '\ud835', 0, 1, 'surrogates not allowed'),
+    ResponseError('model "nomic-embed-text" not found, try pulling it first', 404),
+    ValueError('something else'),
+])
+def test_an_error_trying_again_cannot_fix_fails_at_once(store, monkeypatch, error):
+    calls = _flaky(store, monkeypatch, fail_calls={2, 3, 4}, error=error)
+
+    with pytest.raises(type(error)):
+        store.store_chunks(_docs(150))
+
+    assert calls == [64, 64]  # the second batch went once
+    assert _stored(store) == 0
+
+
+@pytest.mark.parametrize('error, temporary', [
+    (ResponseError('Post "http://127.0.0.1:52804/tokenize": EOF', 400), True),
+    (ResponseError('llama runner process has terminated', 500), True),
+    (ResponseError('server busy', 429), True),
+    (ConnectionError('Failed to connect to Ollama'), True),
+    (httpx.ReadTimeout('timed out'), True),
+    (httpx.RemoteProtocolError('peer closed connection'), True),
+    (ResponseError('model "x" not found', 404), False),
+    (UnicodeEncodeError('utf-8', '\ud835', 0, 1, 'surrogates not allowed'), False),
+    (ValueError('bad input'), False),
+])
+def test_only_connection_and_server_errors_are_tried_again(error, temporary):
+    from src.modules.vector_store_and_embedding import is_temporary
+
+    assert is_temporary(error) is temporary
