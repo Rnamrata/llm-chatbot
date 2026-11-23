@@ -104,8 +104,39 @@ class DocumentRetriever(BaseRetriever):
         return {'$and': [DOCUMENT_FILTER, {'source': {'$in': list(self.sources)}}]}
 
     def _get_relevant_documents(self, query, *, run_manager=None):
-        found = self.vector_store.get_retriever(k=self.k, filter=self.filter).invoke(query)
+        if len(self.sources) < 2:
+            found = self.vector_store.get_retriever(k=self.k, filter=self.filter).invoke(query)
+        else:
+            found = self._from_each_source(query)
         return [
             Document(page_content=d.page_content, metadata={**d.metadata, 'source_label': source_label(d.metadata)})
             for d in found
         ]
+
+    def _from_each_source(self, query):
+        """
+        A chat with several sources of its own reads from each of them: every source gets a
+        share of the passages (at least one), and the rest go to the best matches overall.
+        Ranked in one list, a 971-passage book filled all 8 places for a general question,
+        and a 94-passage video chosen with it was never read.
+        """
+        store = self.vector_store.vectorstore
+        share = max(1, self.k // len(self.sources))
+        picked = []
+        seen = set()
+
+        def keep(hits):
+            for doc, score in hits:
+                key = (doc.metadata.get('source'), doc.page_content)
+                if key not in seen:
+                    seen.add(key)
+                    picked.append((doc, score))
+
+        for source in self.sources:
+            keep(store.similarity_search_with_score(query, k=share, filter={'$and': [DOCUMENT_FILTER, {'source': source}]}))
+        if len(picked) < self.k:
+            keep(store.similarity_search_with_score(query, k=self.k, filter=self.filter)[: self.k])
+            picked = picked[: max(self.k, len(self.sources))]
+
+        picked.sort(key=lambda hit: hit[1])  # Chroma scores are distances: closest first
+        return [doc for doc, _ in picked]

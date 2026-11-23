@@ -71,7 +71,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 
 **Data Flow:**
 1. **Upload:** Document → Extract → Chunk → Embed → Store
-2. **Chat:** Question → search the added sources only (never code reviews), 8 passages → each passage labelled with its source's name, kind and when it was added → LLM → Answer with Sources. Passages are embedded with nomic's `search_document: ` prefix and questions with `search_query: `
+2. **Chat:** Question → search the added sources only (never code reviews), or the chat's own sources when it has some, 8 passages (with several sources of its own, each gets a share, at least one passage, so a large book can't crowd out a short video) → each passage labelled with its source's name, kind and when it was added → LLM → Answer with Sources. Passages are embedded with nomic's `search_document: ` prefix and questions with `search_query: `
 3. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → opening message built from the findings (exact counts, plus a note if a check had a problem) → chat session scoped to that review via `review_id`
 4. **Code Review chat (Ask Lens):** Question → the whole file with a number on every line, plus every finding → qwen2.5-coder:7b → Answer. A follow-up is sent as it was asked, not rewritten first. Only a file longer than `REVIEW_FULL_CODE_CHARS` is searched instead, and those passages are numbered too
 
