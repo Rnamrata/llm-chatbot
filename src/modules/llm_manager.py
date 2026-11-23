@@ -4,6 +4,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_classic.chains import ConversationalRetrievalChain
 from langchain_classic.memory import ConversationBufferMemory
 from src import config
+from src.modules.review_context import with_card_sources
 
 DOCS_PROMPT_TEMPLATE = """You are a helpful AI assistant. Use the following context from documents and the chat history to answer the question.
 If you cannot answer based on the context provided, say so clearly.
@@ -37,6 +38,7 @@ How to answer:
 - Do not show example calls or output unless you work them out from the code; if you do, show each step ("start = 2 * 3 = 6").
 - For a fix, say where each change goes using the current line numbers ("Replace line 35 with:", "Insert after line 31:"); do not number new lines yourself.
 - Name errors as the file's language does (TypeError in TypeScript, NullPointerException in Java, ZeroDivisionError in Python).
+- When a finding has "Why it matters", use that reason when you explain the problem. Don't list sources or links yourself: Lens adds them after your answer.
 - Be concise.
 
 {context}
@@ -95,6 +97,7 @@ class ReviewChat:
         answer = self.llm.invoke(self.prompt.format(
             context=context, chat_history=history_text(history), question=question
         ))
+        answer = with_card_sources(answer, question, docs)
         self.memory.save_context({'question': question}, {'answer': answer})
         return {'answer': answer, 'source_documents': docs}
 

@@ -5,6 +5,8 @@ search for "the 5 best-matching passages" left out the methods people asked abou
 and code without line numbers made the model guess them. Only a file too long for
 the model's context falls back to searching, and those passages are numbered too.
 """
+import json
+import re
 from typing import Any
 
 from langchain_core.documents import Document
@@ -24,6 +26,17 @@ def number_lines(code, start=1):
     return '\n'.join(f'{n:>{width}}: {line}' for n, line in enumerate(lines, start))
 
 
+def parse_why(text):
+    """A finding's stored "why" card, or None when it has none or it can't be read"""
+    if not text:
+        return None
+    try:
+        why = json.loads(text)
+    except ValueError:
+        return None
+    return why if isinstance(why, dict) and why.get('reason') else None
+
+
 def findings_text(findings):
     """Every finding on its own line, most serious first, then by line"""
     if not findings:
@@ -39,8 +52,60 @@ def findings_text(findings):
         row = f"- {where} ({labels}): {f.get('message', '')}"
         if f.get('suggestion'):
             row += f" Suggested fix: {f['suggestion']}"
+        why = parse_why(f.get('why_json'))
+        if why:
+            source = f"{why.get('source')}, {why.get('url')}" if why.get('url') else why.get('source')
+            row += f" Why it matters: {why['reason']} (Source: {source})"
         rows.append(row)
     return '\n'.join(rows)
+
+
+LINE_MENTION = re.compile(r'\blines?\s+(\d+)(?:\s*(?:-|–|to|and|,)\s*(\d+))?', re.IGNORECASE)
+MAX_CARD_SOURCES = 3
+
+
+def lines_named_in(text):
+    """The line numbers a question or answer names: "line 20", "lines 20-24", "lines 3 and 7" """
+    lines = []
+    for m in LINE_MENTION.finditer(text or ''):
+        lines += [int(n) for n in m.groups() if n]
+    return lines
+
+
+def card_sources(findings):
+    """Each finding's line with the source its card cites: [{'line', 'source', 'url'}]"""
+    cards = []
+    for f in findings:
+        why = parse_why(f.get('why_json'))
+        if why and why.get('source') and f.get('line'):
+            cards.append({'line': f['line'], 'source': why['source'], 'url': why.get('url') or ''})
+    return cards
+
+
+def with_card_sources(answer, question, docs):
+    """
+    The answer with the sources of the findings it is about added at the end.
+
+    The model was asked to cite them and mostly didn't, so Lens adds them itself:
+    the findings on the lines the question names or, when it names none, the
+    lines the answer talks about. A source the answer already links is not repeated.
+    """
+    cards = next((d.metadata.get('cards') for d in docs if d.metadata.get('type') == 'review_findings'), None)
+    if not cards:
+        return answer
+
+    lines = lines_named_in(question) or lines_named_in(answer)
+    sources = []
+    for line in lines:
+        for card in cards:
+            pair = (card['source'], card['url'])
+            if card['line'] == line and pair not in sources and (card['url'] or card['source']) not in answer:
+                sources.append(pair)
+    if not sources:
+        return answer
+
+    rows = [f'- [{name}]({url})' if url else f'- {name}' for name, url in sources[:MAX_CARD_SOURCES]]
+    return answer.rstrip() + '\n\n' + ('Source:' if len(rows) == 1 else 'Sources:') + '\n' + '\n'.join(rows)
 
 
 def _chunk_body(doc):
@@ -99,7 +164,8 @@ class ReviewContextRetriever(BaseRetriever):
 
         findings_doc = Document(
             page_content=f'Findings of the automated review of {filename}:\n{findings_text(findings)}',
-            metadata={'source': filename, 'type': 'review_findings', 'review_id': self.review_id},
+            metadata={'source': filename, 'type': 'review_findings', 'review_id': self.review_id,
+                      'cards': card_sources(findings)},
         )
         return code_docs + [findings_doc]
 
