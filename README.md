@@ -34,6 +34,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 - 🔍 **Semantic Search** - Vector-based retrieval with source attribution
 - 🚀 **Automatic Pipeline** - One-call upload to storage
 - 💾 **Saved Sessions** - Chats and code reviews are saved to disk with a title, type and pin, so they survive a restart
+- 📚 **A chat's own sources** - A chat can answer from chosen sources only; a file or link added from a chat joins it, and one already in Sources is reused instead of stored twice
 
 ### Technical Features
 - 🏗️ **Modular Architecture** - Clean separation of concerns
@@ -199,9 +200,11 @@ Web pages added before the cleaning was introduced keep their menus and footers;
 
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
-| `/upload/file` | POST | `file: <file>` | Upload PDF/TXT/MD |
-| `/upload/youtube` | POST | `{"url": "..."}` | Transcribe YouTube video |
-| `/upload/web` | POST | `{"url": "..."}` | Scrape a web page and store its readable text, without menus, footers, banners and "related articles" |
+| `/upload/file` | POST | `file: <file>`, `session_id` (optional) | Upload PDF/TXT/MD. The same file (same name and content) already in Sources is reused (`"reused": true`, nothing stored); the same name with new content replaces the older copy once the new one is stored (`"replaced": true`) |
+| `/upload/youtube` | POST | `{"url": "...", "session_id": "..."}` | Transcribe YouTube video. A link already in Sources is reused without downloading it again |
+| `/upload/web` | POST | `{"url": "...", "session_id": "..."}` | Scrape a web page and store its readable text, without menus, footers, banners and "related articles". A link already in Sources is reused |
+
+With a `session_id`, the source joins that chat's own sources (see `/chat/session/{id}/sources`). Every upload answers with the stored `source` (`id`, `name`, `type`, `chunks`).
 | `/upload/code` | POST | `file: <code file>`, `session_id` | Upload code for review without attaching it to a chat session |
 
 ### Code Review Endpoints
@@ -223,12 +226,13 @@ Web pages added before the cleaning was introduced keep their menus and footers;
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
 | `/chat/new` | POST | - | Create new session |
-| `/chat` | POST | `{"question": "...", "session_id": "...", "review_id": "..."}` | Send message. `review_id` is optional: for a review's chat the server no longer knows, it restores review mode |
-| `/chat/history/{id}` | GET | - | Get conversation history, each answer with its sources |
+| `/chat` | POST | `{"question": "...", "session_id": "...", "review_id": "...", "source_ids": [...], "k": 8}` | Send message. All but `question` are optional. `review_id`: for a review's chat the server no longer knows, it restores review mode. `source_ids`: sets the chat's own sources before answering (ids from `/sources`; `[]` means every source). `k`: passages to search, default `RETRIEVAL_K`. An answer only lists the sources it names, or of the kind it mentions ("the video"); if it names none, all the passages it was given |
+| `/chat/session/{id}/sources` | PUT | `{"source_ids": [...]}` | Choose the sources a chat answers from; `[]` means every source. Creates the chat if it is new (e.g. "Start a chat with these"); ids no longer in Sources are left out. Answers with the `session` and the chosen `sources` (`id`, `name`, `type`). Not for a review's chat (400) |
+| `/chat/history/{id}` | GET | - | Get conversation history, each answer with its sources, and the chat's `source_ids` |
 | `/chat/session/{id}` | GET | - | Get session info |
 | `/chat/session/{id}` | PATCH | `{"pinned": true}` or `{"title": "..."}` | Pin, unpin or rename a session |
 | `/chat/clear/{id}` | DELETE | - | Delete a session; for a review's session, the stored review goes too |
-| `/chat/sessions` | GET | - | List saved chats and reviews, most recently used first, with `type`, `title`, `preview`, `pinned` and counts |
+| `/chat/sessions` | GET | - | List saved chats and reviews, most recently used first, with `type`, `title`, `preview`, `pinned`, `source_ids` and counts. `source_count` is the chat's own sources, or the sources its answers cited when it has none |
 | `/chat/cleanup` | POST | `{"inactive_hours": 24, "keep_pinned": true}` | Delete sessions not used for a while, and their reviews; pinned ones are kept unless `keep_pinned` is `false` |
 
 Sessions are saved to `SESSIONS_FILE` (`data/sessions.json` by default) whenever they change, and loaded when the server starts. A session's conversation is rebuilt from its saved messages the first time it is used again.
@@ -322,6 +326,7 @@ llm-chatbot/
 ├── tests/                       # Automated tests (pytest, fully mocked)
 │   ├── conftest.py
 │   ├── test_api.py
+│   ├── test_chat_sources.py
 │   ├── test_document_processor.py
 │   ├── test_document_search.py
 │   ├── test_file_manager.py
@@ -448,10 +453,11 @@ Use Postman, cURL, or Python requests to test endpoints. See [Usage Examples](#-
    chunk_size=500,  # Smaller = faster
    chunk_overlap=50
 ```
+   Sources already added keep their old chunks: remove them and add them again after a change.
 
 3. **Reduce Retrieved Chunks**
 ```python
-   {"question": "...", "k": 3}  # Default is 5
+   {"question": "...", "k": 3}  # Default is 8 (RETRIEVAL_K)
 ```
 
 4. **Regular Cleanup**

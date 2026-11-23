@@ -86,6 +86,8 @@ class SourceLibrary:
                     'added_at': metadata.get('added_at'),
                 }
             item['chunks'] += 1
+            if metadata.get('content_hash') and not item.get('content_hash'):
+                item['content_hash'] = metadata['content_hash']
 
         with self._lock:
             processing = dict(self._processing)
@@ -123,6 +125,23 @@ class SourceLibrary:
 
     def get(self, sid):
         return next((s for s in self.list()['sources'] if s['id'] == sid), None)
+
+    def find(self, source):
+        """The stored source with this file name or URL, or None"""
+        return self.get(source_id(source))
+
+    def resolve(self, ids):
+        """
+        The file names and URLs behind source ids, in the order given. Ids that are
+        not in the library (removed, or never added) are left out.
+        """
+        by_id = {s['id']: s['source'] for s in self.list()['sources'] if s.get('source')}
+        return [by_id[i] for i in dict.fromkeys(ids) if i in by_id]
+
+    def chunk_ids(self, source):
+        """The stored chunk ids of one source, e.g. to remove an older copy once a new one is in"""
+        result = self.vector_store.vectorstore.get(where={'source': source}, include=['metadatas'])
+        return [i for i, m in zip(result['ids'], result['metadatas']) if (m or {}).get('type') in DOCUMENT_TYPES]
 
     def delete(self, sid):
         """Removes every chunk of one source. Returns how many chunks were removed (0 if none)."""

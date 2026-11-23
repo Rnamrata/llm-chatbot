@@ -2,7 +2,8 @@ import uuid
 from datetime import datetime, timedelta
 
 from src import config
-from src.modules.document_context import DocumentRetriever
+from src.modules.document_context import DocumentRetriever, sources_named_in
+from src.modules.source_library import source_id
 from src.modules.review_context import ReviewContextRetriever
 
 # Longest title made from a first question
@@ -78,6 +79,7 @@ class ChatSession:
             'title': None,
             'pinned': False,
             'k': k,
+            'sources': [],  # the chat's own sources ('source' values); empty means all
             'messages': [],
             'created_at': now,
             'last_activity': now,
@@ -159,10 +161,12 @@ class ChatSession:
             result = chain({"question": question})
             answer = result['answer'].strip()
 
+            documents = result.get('source_documents', [])
+            if session['mode'] == 'docs':
+                documents = sources_named_in(answer, documents)
+
             # Format sources using LLM manager
-            sources = self.llm_manager.format_sources(
-                result.get('source_documents', [])
-            )
+            sources = self.llm_manager.format_sources(documents)
 
             now = datetime.now()
             session['messages'].append({'role': 'user', 'content': question, 'timestamp': now})
@@ -176,7 +180,7 @@ class ChatSession:
                 'success': True,
                 'answer': answer,
                 'sources': sources,
-                'num_sources': len(result.get('source_documents', [])),
+                'num_sources': len(documents),
                 'session_id': session_id,
                 'message_count': self._question_count(session)
             }
@@ -194,6 +198,34 @@ class ChatSession:
                 'answer': 'An error occurred while processing your query.',
                 'session_id': session_id
             }
+
+    def set_sources(self, session_id, sources):
+        """
+        Sets the sources a chat answers from (their 'source' values: file names or
+        URLs). An empty list means every source. Creates the chat if it is new, so
+        sources can be chosen before the first question.
+
+        Returns:
+            dict: The session as list_sessions shows it, or None for a review's chat
+        """
+        if session_id not in self.sessions:
+            self.create_session(session_id)
+        session = self.sessions[session_id]
+        if session['mode'] == 'code_review':
+            return None
+
+        session['sources'] = list(dict.fromkeys(sources))  # in order, without repeats
+        if session['chain'] is not None:
+            # Keeps the chain and its memory, so the conversation carries on
+            session['chain'].retriever = self._retriever(session, session['k'])
+        self._save()
+        return self._summary(session_id, session)
+
+    def add_source(self, session_id, source):
+        """Adds one source to a chat's own sources (a file or link added from the chat)"""
+        session = self.sessions.get(session_id)
+        current = session['sources'] if session else []
+        return self.set_sources(session_id, current + [source])
 
     def update_session(self, session_id, pinned=None, title=None):
         """
@@ -245,6 +277,7 @@ class ChatSession:
             return {
                 'history': [],
                 'length': 0,
+                'source_ids': [],
                 'message': 'Session not found'
             }
 
@@ -281,6 +314,7 @@ class ChatSession:
             'title': session['title'],
             'type': session['mode'],
             'review_id': session['review_id'],
+            'source_ids': [source_id(s) for s in session['sources']],
         }
 
     def clear_history(self, session_id):
@@ -384,8 +418,8 @@ class ChatSession:
         if session['review_id']:
             # Ask Lens reads the whole review: the numbered file and every finding
             return ReviewContextRetriever(vector_store=self.vector_store, review_id=session['review_id'], k=k)
-        # A document chat searches the added sources only, each passage named
-        return DocumentRetriever(vector_store=self.vector_store, k=k)
+        # A document chat searches the added sources only (or its own), each passage named
+        return DocumentRetriever(vector_store=self.vector_store, k=k, sources=session['sources'])
 
     def _chain(self, session):
         """The session's chain, built from its saved messages the first time it is needed"""
@@ -438,7 +472,9 @@ class ChatSession:
             'last_activity': session['last_activity'].isoformat(),
             'message_count': len(questions),
             'messages': len(messages),
-            'source_count': 0 if is_review else len(cited),
+            # The chat's own sources when it has them, else the ones its answers cited
+            'source_count': 0 if is_review else len(session['sources']) or len(cited),
+            'source_ids': [source_id(s) for s in session['sources']],
             'review_id': session['review_id'],
             'filename': session['filename'],
             'language': session['language'],
@@ -450,7 +486,8 @@ class ChatSession:
         records = {
             session_id: self._to_record(session)
             for session_id, session in self.sessions.items()
-            if session['messages']  # an empty session has nothing worth keeping
+            # An empty session has nothing worth keeping, unless sources were chosen for it
+            if session['messages'] or session['sources']
         }
         try:
             self.store.save(records)
@@ -467,6 +504,7 @@ class ChatSession:
             'title': session['title'],
             'pinned': session['pinned'],
             'k': session['k'],
+            'sources': session['sources'],
             'created_at': session['created_at'].isoformat(),
             'last_activity': session['last_activity'].isoformat(),
             'messages': [
@@ -493,6 +531,7 @@ class ChatSession:
             'title': record.get('title'),
             'pinned': bool(record.get('pinned')),
             'k': record.get('k') or config.RETRIEVAL_K,
+            'sources': [s for s in record.get('sources') or [] if isinstance(s, str)],
             'messages': messages,
             'created_at': created,
             'last_activity': _parse_time(record.get('last_activity'), created),
