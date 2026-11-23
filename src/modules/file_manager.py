@@ -7,6 +7,7 @@ from langchain_core.documents import Document
 from langchain_community.document_loaders import WebBaseLoader
 from werkzeug.utils import secure_filename
 from src.modules.source_library import now_iso
+from src.modules.document_processor import clean_web_page
 
 # Review service answers that mean "this file was not reviewed": bad input, too large, rate limited
 REFUSED_STATUSES = (400, 413, 429)
@@ -207,17 +208,20 @@ class FileManager:
             if not url:
                 return {'error': 'No URL provided', 'success': False}
             
-            # Load web content
+            # Load the page and keep only its readable text, without menus and footers
             loader = WebBaseLoader(url)
-            data = loader.load()
+            soup = loader.scrape()
+            title, text = clean_web_page(soup)
 
-            if not data:
-                return {'error': 'Failed to load data from URL', 'success': False}
-            
-            doc = data[0]
-            
+            if not text:
+                return {'error': 'No readable text found on that page', 'success': False}
+
+            language = soup.find('html').get('lang', 'N/A') if soup.find('html') else 'N/A'
+            description_tag = soup.find('meta', attrs={'name': 'description'})
+            description = description_tag.get('content', 'N/A') if description_tag else 'N/A'
+
             # Create a safe filename from the title
-            title = doc.metadata.get('title', 'web_content')
+            title = title or 'web_content'
             safe_filename = title.replace(" ", "_").replace("/", "_").replace("\\", "_")
             safe_filename = "".join(c for c in safe_filename if c.isalnum() or c in ('_', '-', '.'))
             
@@ -225,18 +229,18 @@ class FileManager:
             destination = f'uploads/{safe_filename}.txt'
             
             with open(destination, 'w', encoding='utf-8') as f:
-                f.write(f"Source: {doc.metadata.get('source', 'N/A')}\n")
-                f.write(f"Title: {doc.metadata.get('title', 'N/A')}\n")
-                f.write(f"Description: {doc.metadata.get('description', 'N/A')}\n")
-                f.write(f"Language: {doc.metadata.get('language', 'N/A')}\n")
+                f.write(f"Source: {url}\n")
+                f.write(f"Title: {title}\n")
+                f.write(f"Description: {description}\n")
+                f.write(f"Language: {language}\n")
                 f.write("\n" + "="*80 + "\n\n")
-                f.write(doc.page_content)
+                f.write(text)
 
             print(f"Web content saved to: {destination}")
             
             # Chunk the content
             chunks = self.document_processor.chunkDocument(
-                content=doc.page_content,
+                content=text,
                 metadata={'source': url, 'type': 'web', 'title': title, 'filename': safe_filename, 'added_at': now_iso()}
             )
             

@@ -175,8 +175,8 @@ temp/
 .AppleDouble
 .LSOverride 
 
-#chroma database
-chroma_db/
+#chroma database, and copies of it such as chroma_db.backup/
+chroma_db*/
 
 #cache
 __pycache__/

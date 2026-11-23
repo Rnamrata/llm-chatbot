@@ -27,6 +27,8 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:4
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.7))
+# Tokens the chat model may read at once: RETRIEVAL_K passages plus the chat history
+LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX", 8192))
 # Ask Lens (code-review chat) has its own model: a coding model reads code better
 # than the general chat model, and the review service already uses this one
 REVIEW_LLM_MODEL = os.getenv("REVIEW_LLM_MODEL", "qwen2.5-coder:7b")
@@ -42,11 +44,18 @@ REVIEW_FULL_CODE_CHARS = int(os.getenv("REVIEW_FULL_CODE_CHARS", 30000))
 # Earlier questions and answers an Ask Lens prompt includes
 REVIEW_HISTORY_MESSAGES = int(os.getenv("REVIEW_HISTORY_MESSAGES", 8))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+# nomic-embed-text is trained to see what a text is for: stored passages start with
+# "search_document: " and questions with "search_query: ". Without them the right
+# passage ranks lower. Set both to "" for a model that does not use prefixes.
+# Changing them means re-embedding what is stored (scripts/reembed.py).
+EMBED_DOCUMENT_PREFIX = os.getenv("EMBED_DOCUMENT_PREFIX", "search_document: ")
+EMBED_QUERY_PREFIX = os.getenv("EMBED_QUERY_PREFIX", "search_query: ")
 
 # ===== Vector store =====
 CHROMA_PERSIST_DIR = _path("CHROMA_PERSIST_DIR", "./chroma_db")
 CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "my_documents")
-RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 5))
+# Passages a document chat reads per question. 5 left answers ranked just below the top out.
+RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 8))
 # Chunks embedded per request to Ollama. A whole book in one request means one dropped
 # connection loses the upload; smaller batches are retried on their own.
 EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", 64))

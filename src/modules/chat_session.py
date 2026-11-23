@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime, timedelta
 
+from src import config
+from src.modules.document_context import DocumentRetriever
 from src.modules.review_context import ReviewContextRetriever
 
 # Longest title made from a first question
@@ -47,17 +49,18 @@ class ChatSession:
 
     # ---------- sessions ----------
 
-    def create_session(self, session_id=None, k=5):
+    def create_session(self, session_id=None, k=None):
         """
         Create a new chat session
 
         Args:
             session_id: Optional session ID, generates one if not provided
-            k: Number of documents to retrieve
+            k: Number of documents to retrieve (defaults to config.RETRIEVAL_K)
 
         Returns:
             str: Session ID
         """
+        k = k or config.RETRIEVAL_K
         if session_id is None:
             session_id = str(uuid.uuid4())
 
@@ -125,18 +128,19 @@ class ChatSession:
             'review_id': review_id
         }
 
-    def query(self, question, session_id, k=5):
+    def query(self, question, session_id, k=None):
         """
         Query with conversation history
 
         Args:
             question: User's question
             session_id: Session identifier
-            k: Number of documents to retrieve
+            k: Number of documents to retrieve (defaults to config.RETRIEVAL_K)
 
         Returns:
             dict: Response with answer, sources, and metadata
         """
+        k = k or config.RETRIEVAL_K
         try:
             # Create session if it doesn't exist
             if session_id not in self.sessions:
@@ -380,7 +384,8 @@ class ChatSession:
         if session['review_id']:
             # Ask Lens reads the whole review: the numbered file and every finding
             return ReviewContextRetriever(vector_store=self.vector_store, review_id=session['review_id'], k=k)
-        return self.vector_store.get_retriever(k=k)
+        # A document chat searches the added sources only, each passage named
+        return DocumentRetriever(vector_store=self.vector_store, k=k)
 
     def _chain(self, session):
         """The session's chain, built from its saved messages the first time it is needed"""
@@ -487,7 +492,7 @@ class ChatSession:
             'language': record.get('language'),
             'title': record.get('title'),
             'pinned': bool(record.get('pinned')),
-            'k': record.get('k') or 5,
+            'k': record.get('k') or config.RETRIEVAL_K,
             'messages': messages,
             'created_at': created,
             'last_activity': _parse_time(record.get('last_activity'), created),

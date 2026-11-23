@@ -2,17 +2,39 @@ import time
 from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 from src import config
 
 # Seconds to wait before retrying a batch; doubles with each retry
 RETRY_DELAY_SECONDS = 1.0
 
+
+class PrefixedEmbeddings(Embeddings):
+    """
+    Adds the task prefixes nomic-embed-text expects: "search_document: " before each
+    stored passage and "search_query: " before each question. Only the vectors see
+    them; the stored text stays as it was.
+    """
+
+    def __init__(self, base, document_prefix='', query_prefix=''):
+        self.base = base
+        self.document_prefix = document_prefix
+        self.query_prefix = query_prefix
+
+    def embed_documents(self, texts):
+        return self.base.embed_documents([self.document_prefix + t for t in texts])
+
+    def embed_query(self, text):
+        return self.base.embed_query(self.query_prefix + text)
+
+
 class VectorStoreAndEmbedding:
     def __init__(self):
         # Initialize embeddings
-        self.embeddings = OllamaEmbeddings(
-            model=config.EMBEDDING_MODEL,
-            base_url=config.OLLAMA_BASE_URL
+        self.embeddings = PrefixedEmbeddings(
+            OllamaEmbeddings(model=config.EMBEDDING_MODEL, base_url=config.OLLAMA_BASE_URL),
+            document_prefix=config.EMBED_DOCUMENT_PREFIX,
+            query_prefix=config.EMBED_QUERY_PREFIX,
         )
 
         # Initialize vector store

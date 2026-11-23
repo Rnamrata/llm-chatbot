@@ -7,6 +7,9 @@ from src import config
 
 DOCS_PROMPT_TEMPLATE = """You are a helpful AI assistant. Use the following context from documents and the chat history to answer the question.
 If you cannot answer based on the context provided, say so clearly.
+Each passage starts with its source in square brackets: the source's name, what kind it is and when it was added. Use it to tell which source the question means ("the PDF", "the video", "the newest one").
+When you say where something comes from, use the source's name in plain words (for example: according to "The trust inversion"). Do not copy the square brackets, the kind or the date, and do not start your answer with a source.
+When a passage lists several facts or numbers, give all of them.
 The current question may refer to earlier messages ("it", "that part", "only the changes"); use the chat history to understand what it means, and answer the current question rather than repeating an earlier answer.
 
 Context from documents:
@@ -44,6 +47,12 @@ Chat History:
 Current Question: {question}
 
 Answer:"""
+
+# How each passage is shown to the model: its source first (set by DocumentRetriever)
+DOCUMENT_PROMPT = PromptTemplate(
+    template="[{source_label}]\n{page_content}",
+    input_variables=["page_content", "source_label"],
+)
 
 PROMPT_TEMPLATES = {
     "docs": DOCS_PROMPT_TEMPLATE,
@@ -103,7 +112,7 @@ class LLMManager:
         """
         self.model_name = model_name or config.LLM_MODEL
         self.temperature = temperature or config.LLM_TEMPERATURE
-        self.llm = OllamaLLM(model=self.model_name, temperature=self.temperature)
+        self.llm = OllamaLLM(model=self.model_name, temperature=self.temperature, num_ctx=config.LLM_NUM_CTX)
         self.review_model_name = config.REVIEW_LLM_MODEL
         self.review_llm = OllamaLLM(
             model=self.review_model_name,
@@ -151,7 +160,7 @@ class LLMManager:
             memory=memory,
             return_source_documents=True,
             rephrase_question=False,
-            combine_docs_chain_kwargs={"prompt": prompt},
+            combine_docs_chain_kwargs={"prompt": prompt, "document_prompt": DOCUMENT_PROMPT},
             verbose=False
         )
 
