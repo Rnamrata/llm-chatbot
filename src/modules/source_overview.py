@@ -137,19 +137,39 @@ def readable_name(name):
     return ' '.join(name.replace('_', ' ').split())
 
 
+# A topic's label before ":" or a dash, as longer models write them ("**Label:** a sentence")
+_LABEL = re.compile(r'^(?P<label>[^:–—]{1,60}?)\s*(?::|\s[–—-]\s)\s*\S')
+MAX_LABEL_WORDS = 6
+
+
+def _topic(item):
+    """A topic as a short line: emphasis marks removed, and just its label when it has one"""
+    item = re.sub(r'(\*\*|__|\*|_)(.+?)\1', r'\2', item).strip()
+    label = _LABEL.match(item)
+    if label and len(label.group('label').split()) <= MAX_LABEL_WORDS:
+        return label.group('label').strip()
+    return item
+
+
 def tidy_overview(text):
-    """Markdown bullets ("- "), no empty ones, at most MAX_TOPICS; the model used "•" and left some blank"""
+    """
+    The overview as Lens shows it: the opening sentences, then at most MAX_TOPICS
+    short "- " topics. Models used "•" and left some blank; longer ones (gemma3) wrote
+    each topic as a labelled sentence and added a closing paragraph, which goes.
+    """
     lines, topics = [], 0
     for line in str(text).strip().splitlines():
         bullet = _BULLET.match(line)
         if bullet:
-            item = bullet.group(1)
+            item = _topic(bullet.group(1))
             if not item:
                 continue
             topics += 1
             if topics <= MAX_TOPICS:
                 lines.append(f'- {item}')
             continue
+        if topics and line.strip():
+            break  # anything after the topic list is a closing remark
         lines.append(line.rstrip())
     return re.sub(r'\n{3,}', '\n\n', '\n'.join(lines)).strip()
 
