@@ -7,7 +7,8 @@ import src.modules.llm_manager as llm_manager_module
 import src.modules.chat_session as chat_session_module
 import src.modules.review_client as review_client_module
 from src.modules.review_summary import build_headline, SEVERITY_ORDER
-from src.modules.source_library import SourceLibrary, source_id
+from src.modules.source_library import LEGACY_ID, SourceLibrary, source_id
+from src.modules.overviews import Overviews
 from src.modules.session_store import SessionStore
 from src.modules.review_context import parse_why
 from werkzeug.utils import secure_filename
@@ -26,8 +27,12 @@ vector_store = vector_store_module.VectorStoreAndEmbedding()
 review_client = review_client_module.ReviewClient()
 file_manager = file_manager_module.FileManager(document_processor, vector_store, review_client)
 llm_manager = llm_manager_module.LLMManager(model_name=None, temperature=None)
-chat_manager = chat_session_module.ChatSession(llm_manager, vector_store, SessionStore(config.SESSIONS_FILE))
 sources = SourceLibrary(vector_store)
+# Overviews of sources ("summarize this"), built in the background on the document model
+overviews = Overviews(vector_store, llm_manager.llm, config.OVERVIEWS_FILE, enabled=config.OVERVIEW_ENABLED)
+chat_manager = chat_session_module.ChatSession(
+    llm_manager, vector_store, SessionStore(config.SESSIONS_FILE), overviews=overviews, library=sources
+)
 
 # ==================== UPLOAD ENDPOINTS ====================
 
@@ -147,7 +152,9 @@ def _track_upload(source, name, doc_type, upload, session_id=None, replaces=()):
         chat_manager.add_source(session_id, source)
         result['session_id'] = session_id
 
-    result['source'] = sources.get(source_id(source))
+    # Its overview is written in the background, ready by the time someone asks
+    overviews.queue(source)
+    result['source'] = _with_overview(sources.get(source_id(source)))
     return jsonify(result), 200
 
 @app.route('/upload/code', methods=['POST'])
@@ -310,9 +317,21 @@ def list_sources():
     with id 'legacy'.
     """
     try:
-        return jsonify(sources.list())
+        listed = sources.list()
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
+    listed['sources'] = [_with_overview(s) for s in listed['sources']]
+    return jsonify(listed)
+
+
+def _with_overview(item):
+    """
+    A source as GET /sources lists it, with its overview's status (ready | building | failed |
+    null). With overviews switched off the field is left out, so Lens offers none.
+    """
+    if item is not None and overviews.enabled:
+        item['overview'] = overviews.status(item['id']) if item['id'] != LEGACY_ID else None
+    return item
 
 
 @app.route('/sources/<sid>', methods=['DELETE'])
@@ -325,7 +344,39 @@ def delete_source(sid):
 
     if not removed:
         return jsonify({'error': 'Source not found', 'success': False}), 404
+    overviews.delete(sid)
     return jsonify({'success': True, 'id': sid, 'chunks_removed': removed})
+
+
+@app.route('/sources/<sid>/overview', methods=['GET'])
+def get_overview(sid):
+    """
+    A source's overview: status (ready | building | failed | null when it has none
+    yet), text (markdown), built_at and error
+    """
+    if sources.get(sid) is None:
+        return jsonify({'error': 'Source not found', 'success': False}), 404
+    entry = overviews.get(sid) or {}
+    return jsonify({
+        'success': True,
+        'id': sid,
+        'status': entry.get('status'),
+        'text': entry.get('text'),
+        'built_at': entry.get('built_at'),
+        'error': entry.get('error'),
+    })
+
+
+@app.route('/sources/<sid>/overview', methods=['POST'])
+def build_overview(sid):
+    """Writes (or writes again) a source's overview in the background; 202 while it is being written"""
+    item = sources.get(sid)
+    if item is None:
+        return jsonify({'error': 'Source not found', 'success': False}), 404
+    if sid == LEGACY_ID or not item.get('source'):
+        return jsonify({'error': 'Older data stored without names cannot be summarized', 'success': False}), 400
+    overviews.queue(item['source'], front=True)
+    return jsonify({'success': True, 'id': sid, 'status': overviews.status(sid)}), 202
 
 # ==================== CHAT ENDPOINTS ====================
 
@@ -374,6 +425,12 @@ def chat():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/chat/progress/<session_id>', methods=['GET'])
+def chat_progress(session_id):
+    """What a question still being answered waits on, e.g. {stage: 'summarizing', source, since}"""
+    return jsonify({'success': True, **chat_manager.progress(session_id)})
 
 
 @app.route('/chat/new', methods=['POST'])

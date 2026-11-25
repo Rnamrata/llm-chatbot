@@ -1,13 +1,24 @@
+import time
 import uuid
 from datetime import datetime, timedelta
 
+from langchain_core.documents import Document
+
 from src import config
-from src.modules.document_context import DocumentRetriever, sources_named_in
-from src.modules.source_library import source_id
+from src.modules.document_context import DocumentRetriever, _name_forms, sources_named_in
+from src.modules.overview_questions import is_overview_question
+from src.modules.source_library import now_iso, source_id
 from src.modules.review_context import ReviewContextRetriever
 
 # Longest title made from a first question
 TITLE_LENGTH = 60
+
+# Most sources an overview answer shows
+MAX_OVERVIEWS = 5
+
+# Added to a search answer when an overview was asked for but isn't there
+OVERVIEW_NOT_READY = ("_The full overview isn't ready yet, so this answer comes from the passages "
+                      "that best match your question. Ask again in a minute._")
 
 
 def _shorten(text, limit):
@@ -28,7 +39,7 @@ class ChatSession:
     when a store is given, saving them so they survive a restart
     """
 
-    def __init__(self, llm_manager, vector_store, store=None):
+    def __init__(self, llm_manager, vector_store, store=None, overviews=None, library=None):
         """
         Initialize Chat Session Manager
 
@@ -36,11 +47,16 @@ class ChatSession:
             llm_manager: LLMManager instance
             vector_store: VectorStoreAndEmbedding instance
             store: SessionStore to save sessions in (optional; in memory only without it)
+            overviews: Overviews of sources, for "summarize this" (optional)
+            library: SourceLibrary, to find the sources a question names (optional)
         """
         self.llm_manager = llm_manager
         self.vector_store = vector_store
         self.store = store
+        self.overviews = overviews
+        self.library = library
         self.sessions = {}
+        self._progress = {}  # session id -> what a pending question is waiting on
 
         if store is not None:
             for session_id, record in store.load().items():
@@ -157,13 +173,21 @@ class ChatSession:
                 chain.retriever = self._retriever(session, k)
                 session['k'] = k
 
-            # Run the chain
-            result = chain({"question": question})
-            answer = result['answer'].strip()
+            overview = self._overview_answer(session_id, session, question)
+            if isinstance(overview, tuple):
+                answer, documents = overview
+                if session['memory'] is not None:
+                    session['memory'].save_context({'question': question}, {'answer': answer})
+            else:
+                # Run the chain
+                result = chain({"question": question})
+                answer = result['answer'].strip()
 
-            documents = result.get('source_documents', [])
-            if session['mode'] == 'docs':
-                documents = sources_named_in(answer, documents)
+                documents = result.get('source_documents', [])
+                if session['mode'] == 'docs':
+                    documents = sources_named_in(answer, documents)
+                if overview == OVERVIEW_NOT_READY:
+                    answer = f'{answer}\n\n{OVERVIEW_NOT_READY}'
 
             # Format sources using LLM manager
             sources = self.llm_manager.format_sources(documents)
@@ -198,6 +222,69 @@ class ChatSession:
                 'answer': 'An error occurred while processing your query.',
                 'session_id': session_id
             }
+
+    # ---------- overviews ----------
+
+    def progress(self, session_id):
+        """What a pending question is waiting on: {'stage': 'summarizing', 'source', 'since'} or nothing"""
+        return dict(self._progress.get(session_id) or {'stage': None, 'source': None, 'since': None})
+
+    def _overview_answer(self, session_id, session, question):
+        """
+        For "summarize this" in a document chat: (answer, documents) from the stored
+        overviews of the sources asked about; OVERVIEW_NOT_READY when one isn't there
+        in time; None for any other question
+        """
+        if self.overviews is None or not self.overviews.enabled or self.library is None or session['mode'] != 'docs':
+            return None
+        if not is_overview_question(question):
+            return None
+        chosen = self._overview_sources(session, question)
+        if not chosen:
+            return None
+
+        shown = chosen[:MAX_OVERVIEWS]
+        deadline = time.monotonic() + config.OVERVIEW_WAIT_SECONDS
+        texts = []
+        try:
+            for item in shown:
+                if self.overviews.status(item['id']) is None:
+                    self.overviews.queue(item['source'], front=True)
+                entry = self.overviews.get(item['id'])
+                if entry and entry['status'] == 'building':
+                    self._progress[session_id] = {'stage': 'summarizing', 'source': item['name'], 'since': now_iso()}
+                    entry = self.overviews.wait(item['id'], max(0.0, deadline - time.monotonic()))
+                if not entry or entry['status'] != 'ready':
+                    return OVERVIEW_NOT_READY
+                texts.append(entry['text'])
+        finally:
+            self._progress.pop(session_id, None)
+
+        if len(shown) == 1:
+            answer = texts[0]
+        else:
+            answer = '\n\n'.join(f"### {item['name']}\n\n{text}" for item, text in zip(shown, texts))
+        left_out = len(chosen) - len(shown)
+        if left_out:
+            answer += f"\n\n_{left_out} more source{'s' if left_out > 1 else ''} {'aren' if left_out > 1 else 'isn'}'t shown._"
+        documents = [Document(page_content=text, metadata=self._source_metadata(item)) for item, text in zip(shown, texts)]
+        return answer, documents
+
+    def _overview_sources(self, session, question):
+        """The sources a question names; otherwise the chat's own sources, in the order they were added"""
+        usable = [s for s in self.library.list()['sources'] if s.get('source') and s['status'] == 'ready']
+        asked = question.lower()
+        named = [s for s in usable if any(form in asked for form in _name_forms(s['name']))]
+        if named:
+            return named
+        by_source = {s['source']: s for s in usable}
+        return [by_source[src] for src in session['sources'] if src in by_source]
+
+    def _source_metadata(self, item):
+        """A source's chunk metadata (name, type, title), so its chip shows as it does under other answers"""
+        stored = self.vector_store.vectorstore.get(where={'source': item['source']}, include=['metadatas'])
+        metadatas = stored.get('metadatas') or []
+        return dict(metadatas[0]) if metadatas else {'source': item['source'], 'type': item['type']}
 
     def set_sources(self, session_id, sources):
         """

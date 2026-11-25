@@ -34,6 +34,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 - 🔍 **Semantic Search** - Vector-based retrieval with source attribution
 - 🚀 **Automatic Pipeline** - One-call upload to storage
 - 💾 **Saved Sessions** - Chats and code reviews are saved to disk with a title, type and pin, so they survive a restart
+- 📝 **Overviews** - "Summarize this" answers at once from an overview of each source (what it is, then its key topics), written in the background when the source is added
 - 📚 **A chat's own sources** - A chat can answer from chosen sources only; a file or link added from a chat joins it, and one already in Sources is reused instead of stored twice
 
 ### Technical Features
@@ -72,8 +73,9 @@ A production-ready **Retrieval-Augmented Generation (RAG)** chatbot system that 
 **Data Flow:**
 1. **Upload:** Document → Extract → Chunk → Embed → Store
 2. **Chat:** Question → search the added sources only (never code reviews), or the chat's own sources when it has some, 8 passages (with several sources of its own, each gets a share, at least one passage, so a large book can't crowd out a short video) → each passage labelled with its source's name, kind and when it was added → LLM → Answer with Sources. Passages are embedded with nomic's `search_document: ` prefix and questions with `search_query: `
-3. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → opening message built from the findings (exact counts, plus a note if a check had a problem) → chat session scoped to that review via `review_id`
-4. **Code Review chat (Ask Lens):** Question → the whole file with a number on every line, plus every finding → qwen2.5-coder:7b → Answer. A follow-up is sent as it was asked, not rewritten first. When the answer is about a line whose finding has a "why" card, Lens adds that card's source link at the end (the model is given the reason but not asked to cite it, because it rarely did). Only a file longer than `REVIEW_FULL_CODE_CHARS` is searched instead, and those passages are numbered too
+3. **Overviews ("summarize this"):** When a source is added, a background worker writes its overview: a few sentences on what it is, then its 5–7 key topics. A short source is summarized whole. A long one (a book doesn't fit the model's context) has its chunks grouped by topic using the stored embeddings, one passage per group is picked, and those are summarized in reading order. In a document chat, "summarize this", "what's this about", "main points" and the like are answered straight from the stored overviews of the sources the question names, or else of the chat's own sources (at most 5), with no model call. A question about something in particular ("summarize what it says about agents") still goes through search, and so does any question in a chat with no sources of its own. An overview still being written is waited for (up to `OVERVIEW_WAIT_SECONDS`); one that isn't there in time gives a search answer with a note
+4. **Code Review:** Code file → validated & stored → sent to the configured review service → findings stored → opening message built from the findings (exact counts, plus a note if a check had a problem) → chat session scoped to that review via `review_id`
+5. **Code Review chat (Ask Lens):** Question → the whole file with a number on every line, plus every finding → qwen2.5-coder:7b → Answer. A follow-up is sent as it was asked, not rewritten first. When the answer is about a line whose finding has a "why" card, Lens adds that card's source link at the end (the model is given the reason but not asked to cite it, because it rarely did). Only a file longer than `REVIEW_FULL_CODE_CHARS` is searched instead, and those passages are numbered too
 
 ---
 
@@ -152,7 +154,12 @@ cp .env.example .env
 | `RETRIEVAL_K` | `8` | Default number of chunks retrieved per query (document chats, and very long files in code-review chats) |
 | `EMBED_BATCH_SIZE` / `EMBED_ATTEMPTS` | `64` / `3` | Chunks embedded per Ollama request, and tries per batch before an upload fails. Only a dropped connection, a timeout or an Ollama server error is tried again; any other error (text that can't be encoded, a model that isn't installed) fails the upload at once |
 | `UPLOAD_DIR` / `MEDIA_DIR` | `./uploads` / `./uploads/media` | Where uploaded files/audio are saved |
-| `SESSIONS_FILE` | `./data/sessions.json` | Where chat sessions are saved |
+| `SESSIONS_FILE` | `./data/sessions.json` | Where chat sessions are saved; overviews go in `overviews.json` next to it |
+| `OVERVIEW_ENABLED` | `true` | Write an overview of each source when it is added. With `false`, "summarize this" is a normal search and `GET /sources` leaves out `overview` |
+| `OVERVIEW_WHOLE_CHARS` | `20000` | A source with no more text than this is summarized whole; a longer one from one passage per topic |
+| `OVERVIEW_BATCH_CHARS` | `20000` | Most text the model reads in one overview call; more is summarized in batches, then combined |
+| `OVERVIEW_TOPICS` | `20` | Most topic groups a long source is split into (at least 5, about the square root of its chunk count) |
+| `OVERVIEW_WAIT_SECONDS` | `150` | How long a chat waits for an overview still being written. Keep it under Lens's 180 s answer timeout |
 | `MAX_UPLOAD_MB` | `20` | Max upload size |
 | `WHISPER_MODEL` | `base` | Whisper model for YouTube transcription; loaded on first use (the first transcription downloads it) |
 | `REVIEW_SERVICE_URL` / `REVIEW_TIMEOUT_SECONDS` | `http://localhost:4000` / `120` | Where the code review service is running, and how long to wait for a review (longer than its `LLM_TIMEOUT_MS`, 90 s). The health check waits 5 s |
@@ -218,8 +225,10 @@ With a `session_id`, the source joins that chat's own sources (see `/chat/sessio
 
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
-| `/sources` | GET | - | List added files, YouTube videos and web pages, newest first: `id`, `name`, `type`, `source`, `chunks`, `status` (`ready`, `processing` or `outdated`) and `added_at`. Chunks stored by older versions without a type show as one `outdated` item with id `legacy` |
-| `/sources/{id}` | DELETE | - | Remove a source's chunks from the vector store (the uploaded file stays on disk) |
+| `/sources` | GET | - | List added files, YouTube videos and web pages, newest first: `id`, `name`, `type`, `source`, `chunks`, `status` (`ready`, `processing` or `outdated`), `added_at` and `overview` (its status, as below). Chunks stored by older versions without a type show as one `outdated` item with id `legacy` |
+| `/sources/{id}` | DELETE | - | Remove a source's chunks from the vector store, and its overview (the uploaded file stays on disk) |
+| `/sources/{id}/overview` | GET | - | The source's overview: `status` (`ready`, `building`, `failed`, or `null` when it has none yet), `text` (markdown), `built_at` and `error`. 404 for an unknown source |
+| `/sources/{id}/overview` | POST | - | Write (or write again) the source's overview in the background; 202. For sources added before overviews existed, or one that failed. 400 for `legacy` |
 
 ### Chat Endpoints
 
@@ -228,6 +237,7 @@ With a `session_id`, the source joins that chat's own sources (see `/chat/sessio
 | `/chat/new` | POST | - | Create new session |
 | `/chat` | POST | `{"question": "...", "session_id": "...", "review_id": "...", "source_ids": [...], "k": 8}` | Send message. All but `question` are optional. `review_id`: for a review's chat the server no longer knows, it restores review mode. `source_ids`: sets the chat's own sources before answering (ids from `/sources`; `[]` means every source). `k`: passages to search, default `RETRIEVAL_K`. An answer only lists the sources it names, or of the kind it mentions ("the video"); if it names none, all the passages it was given |
 | `/chat/session/{id}/sources` | PUT | `{"source_ids": [...]}` | Choose the sources a chat answers from; `[]` means every source. Creates the chat if it is new (e.g. "Start a chat with these"); ids no longer in Sources are left out. Answers with the `session` and the chosen `sources` (`id`, `name`, `type`). Not for a review's chat (400) |
+| `/chat/progress/{id}` | GET | - | What a question still being answered is waiting on: `{"stage": "summarizing", "source": "<name>", "since": "<iso time>"}` while it waits for an overview, otherwise `stage` is `null` |
 | `/chat/history/{id}` | GET | - | Get conversation history, each answer with its sources, and the chat's `source_ids` |
 | `/chat/session/{id}` | GET | - | Get session info |
 | `/chat/session/{id}` | PATCH | `{"pinned": true}` or `{"title": "..."}` | Pin, unpin or rename a session |
@@ -319,6 +329,9 @@ llm-chatbot/
 │   ├── chat_session.py         # Session management
 │   ├── session_store.py        # Saves sessions to data/sessions.json
 │   ├── source_library.py       # Lists and removes sources
+│   ├── source_overview.py      # Picks one passage per topic and writes an overview from them
+│   ├── overviews.py            # Overviews of sources: data/overviews.json and the background worker
+│   ├── overview_questions.py   # Whether a question asks for an overview ("summarize this")
 │   ├── review_summary.py       # Builds the review's opening message
 │   ├── review_context.py       # What a code-review chat reads: numbered code + findings
 │   ├── document_context.py     # What a document chat reads: passages labelled with their source

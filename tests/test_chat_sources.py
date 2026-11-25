@@ -67,7 +67,7 @@ def test_a_chat_with_its_own_sources_only_searches_those(client):
     _add('book.pdf', 'Chapter one is about trust.')
     client.put('/chat/session/c1/sources', json={'source_ids': [_ids(client)['book.pdf']]})
 
-    result = client.post('/chat', json={'question': 'What is this about?', 'session_id': 'c1'}).get_json()
+    result = client.post('/chat', json={'question': 'What does it say about trust?', 'session_id': 'c1'}).get_json()
 
     assert [s['metadata']['source'] for s in result['sources']] == ['book.pdf']
     assert 'Chapter one is about trust.' in llm.prompts[-1]
@@ -299,7 +299,7 @@ def test_a_chat_with_several_sources_reads_from_each_of_them(client):
     ids = _ids(client)
 
     result = client.post('/chat', json={
-        'question': 'What is this about?', 'session_id': 'c1', 'source_ids': [ids['book.pdf'], ids['talk.mp3']]
+        'question': 'What do they say about passages?', 'session_id': 'c1', 'source_ids': [ids['book.pdf'], ids['talk.mp3']]
     }).get_json()
 
     used = [s['metadata']['source'] for s in main.chat_manager.sessions['c1']['messages'][-1]['sources']]
