@@ -68,7 +68,7 @@ def test_chunks_without_a_type_are_one_outdated_item(client):
     [legacy] = client.get('/sources').get_json()['sources']
     assert legacy == {
         'id': 'legacy', 'name': 'Older data without details', 'type': 'unknown',
-        'source': None, 'chunks': 3, 'status': 'outdated', 'added_at': None,
+        'source': None, 'chunks': 3, 'status': 'outdated', 'added_at': None, 'overview': None,
     }
 
 

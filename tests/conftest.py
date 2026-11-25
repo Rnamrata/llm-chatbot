@@ -1,3 +1,4 @@
+import hashlib
 import sys
 import pytest
 from typing import Any, List, Optional
@@ -26,7 +27,8 @@ class FakeEmbeddings:
         pass
 
     def embed_documents(self, texts):
-        return [[0.0] * 8 for _ in texts]
+        # Different texts get different vectors, so grouping by topic has something to work with
+        return [[b / 255 for b in hashlib.sha256(t.encode('utf-8')).digest()[:8]] for t in texts]
 
     def embed_query(self, text):
         return [0.0] * 8
@@ -72,6 +74,8 @@ class FakeChroma:
     """In-memory stand-in for langchain_chroma.Chroma — no real Chroma/SQLite"""
 
     def __init__(self, collection_name=None, embedding_function=None, persist_directory=None):
+        self._embedding_function = embedding_function
+        self._vectors = {}  # id -> embedding, when an embedding function was given
         self._docs = []  # list of (id, page_content, metadata)
         self._collection = _FakeCollection(self._docs)
         self._next_id = 0  # ids stay unique after deletes
@@ -97,6 +101,8 @@ class FakeChroma:
             self._next_id += 1
             doc_id = str(self._next_id)
             self._docs.append((doc_id, doc.page_content, doc.metadata))
+            if self._embedding_function is not None:
+                self._vectors[doc_id] = self._embedding_function.embed_documents([doc.page_content])[0]
             ids.append(doc_id)
         return ids
 
@@ -125,11 +131,14 @@ class FakeChroma:
 
     def get(self, ids=None, where=None, include=None):
         matched = [d for d in self._docs if self._matches(d[2], where)]
-        return {
+        result = {
             'ids': [d[0] for d in matched],
             'documents': [d[1] for d in matched],
             'metadatas': [d[2] for d in matched],
         }
+        if include and 'embeddings' in include:
+            result['embeddings'] = [self._vectors.get(d[0], [0.0] * 8) for d in matched]
+        return result
 
 
 @pytest.fixture
@@ -158,6 +167,8 @@ def app(monkeypatch, tmp_path, fake_review_client):
 
     import main as main_module
     main_module.app.config.update(TESTING=True)
+    # Overviews are built inside the request in tests, never on a background thread
+    main_module.overviews.inline = True
 
     yield main_module.app
 

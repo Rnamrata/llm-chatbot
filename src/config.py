@@ -70,6 +70,18 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 # Saved here so History and open chats survive a restart
 SESSIONS_FILE = _path("SESSIONS_FILE", "./data/sessions.json")
 
+# Source overviews ("summarize this"): built in the background when a source is added
+OVERVIEW_ENABLED = _bool("OVERVIEW_ENABLED", True)
+OVERVIEWS_FILE = SESSIONS_FILE.parent / "overviews.json"
+# A source with no more text than this is summarized whole; a longer one from one passage per topic
+OVERVIEW_WHOLE_CHARS = int(os.getenv("OVERVIEW_WHOLE_CHARS", 20000))
+# Most text the model reads in one overview call (llama3.2 reads 8K tokens at once)
+OVERVIEW_BATCH_CHARS = int(os.getenv("OVERVIEW_BATCH_CHARS", 20000))
+# Most topic groups a long source is split into
+OVERVIEW_TOPICS = int(os.getenv("OVERVIEW_TOPICS", 20))
+# How long a chat waits for an overview still being built. Keep it under Lens's 180 s answer timeout.
+OVERVIEW_WAIT_SECONDS = float(os.getenv("OVERVIEW_WAIT_SECONDS", 150))
+
 # ===== Code review service (Node.js) =====
 REVIEW_SERVICE_URL = os.getenv("REVIEW_SERVICE_URL", "http://localhost:4000").rstrip("/")
 # Longer than the review service's own AI limit (LLM_TIMEOUT_MS, 90 s), so a slow AI review
