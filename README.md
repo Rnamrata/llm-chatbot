@@ -142,7 +142,7 @@ cp .env.example .env
 | `FLASK_HOST` / `FLASK_PORT` / `FLASK_DEBUG` | `0.0.0.0` / `5001` / `false` | Flask server bind address |
 | `CORS_ORIGINS` | `http://localhost:4200` | Comma-separated list of allowed frontend origins |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Where Ollama is running |
-| `LLM_MODEL` / `LLM_TEMPERATURE` | `llama3.2` / `0.7` | Chat model and temperature |
+| `LLM_MODEL` / `LLM_TEMPERATURE` | `llama3.2` / `0.7` | Model for document chats and overviews, and its temperature. `gemma3:4b` gives better answers at a similar speed on a 16 GB Mac (`ollama pull gemma3:4b`) |
 | `LLM_NUM_CTX` | `8192` | Tokens the chat model reads at once: the passages and the chat history |
 | `REVIEW_LLM_MODEL` / `REVIEW_LLM_TEMPERATURE` / `REVIEW_LLM_SEED` | `qwen2.5-coder:7b` / `0` / `42` | Model, temperature and seed for code-review chats (Ask Lens); 0 and a fixed seed give the same answer to the same question |
 | `REVIEW_NUM_CTX` | `16384` | Tokens the review model reads at once: the whole numbered file, the findings and recent messages. Keep it equal to the review service's `LLM_NUM_CTX`: both use the same model, and Ollama reloads it to change the context size |
@@ -456,17 +456,20 @@ Use Postman, cURL, or Python requests to test endpoints. See [Usage Examples](#-
 | "Connection refused" | Ensure both Ollama (`ollama serve`) and Flask (`python main.py`) are running |
 | "415 Unsupported Media Type" | Add header: `-H "Content-Type: application/json"` |
 | "FFmpeg not found" | Install FFmpeg: `brew install ffmpeg` (macOS) or `apt-get install ffmpeg` (Linux) |
-| Slow responses | Use smaller model (`phi3`), reduce chunk size, or decrease `k` parameter |
+| Slow responses | Use a smaller model (`llama3.2:1b`), decrease the `k` parameter, or keep the model loaded longer between questions |
 | Too many old chats | POST to `/chat/cleanup` to delete sessions not used for a day (pinned ones stay) |
 
 ---
 
 ## ⚡ Performance Tips
 
-1. **Choose Right Model**
-   - Fast: `phi3`
-   - Balanced: `llama3.2:1b`
-   - Best: `llama3.2` (default)
+1. **Choose the Right Model** (`LLM_MODEL`, for document chats and overviews)
+   - Fastest: `llama3.2:1b`
+   - Default: `llama3.2` (3B)
+   - Better answers, still quick: `gemma3:4b`
+   - Best that fits 16 GB alongside the code model: an 8B model such as `qwen3:8b` or `llama3.1:8b`, about twice as slow
+
+   Code-review chats keep their own model (`REVIEW_LLM_MODEL`, `qwen2.5-coder:7b`).
 
 2. **Optimize Chunk Size**
 ```python
@@ -496,10 +499,10 @@ Use Postman, cURL, or Python requests to test endpoints. See [Usage Examples](#-
 **Planned Features:**
 - [ ] User authentication & authorization
 - [ ] Database persistence (PostgreSQL)
-- [ ] Frontend UI (React/Vue)
+- [x] Frontend UI: [Lens](https://github.com/Rnamrata/chatbot-frontend) (Angular)
 - [ ] More file formats (DOCX, PPTX, CSV)
 - [ ] Streaming responses
-- [ ] Document update/deletion
+- [x] Document deletion, and replacing a file by adding it again with new content
 - [ ] Export conversations
 - [ ] Docker containerization
 - [ ] Analytics dashboard

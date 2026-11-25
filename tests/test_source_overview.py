@@ -143,3 +143,44 @@ def test_the_model_gets_a_readable_name():
     assert readable_name('LangChain_for_Life_Sciences_Ivan_Reznikov.pdf') == 'LangChain for Life Sciences Ivan Reznikov'
     assert readable_name('The trust inversion | The Kyndryl Institute') == 'The trust inversion | The Kyndryl Institute'
     assert readable_name('notes.txt') == 'notes'
+
+
+# ---------- trimming longer models' overviews (gemma3:4b in a real run) ----------
+
+def test_a_topic_with_a_label_keeps_just_the_label():
+    from src.modules.source_overview import tidy_overview
+    text = ('Intro.\n\nKey topics:\n'
+            '- **Dependability as the Constraint:** The primary challenge is not capability but dependability.\n'
+            '- Token Generation: The source highlights how models generate one token at a time.\n'
+            '- **Correlation Risk** – errors can spread through shared models.\n'
+            '- Tool calling')
+
+    assert tidy_overview(text) == ('Intro.\n\nKey topics:\n- Dependability as the Constraint\n- Token Generation\n'
+                                   '- Correlation Risk\n- Tool calling')
+
+
+def test_a_long_topic_without_a_label_is_kept_whole():
+    from src.modules.source_overview import tidy_overview
+    topic = 'How regulators should test agent systems before they are widely used'
+
+    assert tidy_overview(f'Intro.\n\n- {topic}') == f'Intro.\n\n- {topic}'
+
+
+def test_a_colon_far_into_a_topic_is_not_taken_as_a_label():
+    from src.modules.source_overview import tidy_overview
+    topic = 'The book explains why models that generate text one token at a time behave this way: it matters'
+
+    assert tidy_overview(f'Intro.\n\n- {topic}') == f'Intro.\n\n- {topic}'
+
+
+def test_text_after_the_topic_list_is_dropped():
+    from src.modules.source_overview import tidy_overview
+    text = 'Intro.\n\nKey topics:\n- One\n- Two\n\nKey takeaways include sobering numbers. Finally, it argues for more.'
+
+    assert tidy_overview(text) == 'Intro.\n\nKey topics:\n- One\n- Two'
+
+
+def test_bold_and_italic_marks_in_topics_are_removed():
+    from src.modules.source_overview import tidy_overview
+
+    assert tidy_overview('Intro.\n\n- **Agentic** *AI*') == 'Intro.\n\n- Agentic AI'
